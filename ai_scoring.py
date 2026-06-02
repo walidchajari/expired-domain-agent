@@ -160,13 +160,14 @@ def compute_final_score(
     reg: int,
 ) -> float:
     """
-    Weighted scoring formula:
-    30% Brandability
+    Weighted scoring formula (prioritizing resale value over SEO):
+    25% Brandability
     25% Resale Potential
-    15% Length score
-    10% Age (proxy by registered TLD count)
-    10% Registered TLD count
+    15% Startup Potential
     10% Pronounceability
+    10% Memorability
+    10% Length score
+    5%  Registered TLD count
     """
     brand = ai_scores.get("brandability", 50)
     resale = ai_scores.get("resale_potential", 50)
@@ -188,12 +189,13 @@ def compute_final_score(
     reg_score = min(100, reg * 10)
 
     final = (
-        0.30 * brand
+        0.25 * brand
         + 0.25 * resale
-        + 0.15 * length_score
-        + 0.10 * reg_score
+        + 0.15 * startup
         + 0.10 * pronounce
         + 0.10 * memo
+        + 0.10 * length_score
+        + 0.05 * reg_score
     )
     return round(final, 2)
 

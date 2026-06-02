@@ -466,17 +466,27 @@ def estimate_wholesale_price(domain: str, final_score: float, category: str, geo
         return "$20 - $75"
 
 
-def estimate_probability_of_sale(final_score: float) -> float:
+CATEGORY_SALE_BOOST = {
+    "Geo": 10,
+    "Fintech": 8,
+    "High Commercial Keyword": 8,
+    "AI": 5,
+    "Brandable": 0,
+}
+
+def estimate_probability_of_sale(final_score: float, category: str = "Brandable") -> float:
     if final_score >= 90:
-        return 85.0
+        base = 85.0
     elif final_score >= 80:
-        return 65.0
+        base = 65.0
     elif final_score >= 70:
-        return 45.0
+        base = 45.0
     elif final_score >= 60:
-        return 25.0
+        base = 25.0
     else:
-        return 10.0
+        base = 10.0
+    boost = CATEGORY_SALE_BOOST.get(category, 0)
+    return min(100.0, base + boost)
 
 
 # ---------------------------------------------------------------------------
@@ -511,6 +521,10 @@ def analyze_domain(domain_data: dict) -> dict:
 # Ranking
 # ---------------------------------------------------------------------------
 
+COMMERCIAL_CATEGORIES = {"Geo", "Fintech", "High Commercial Keyword", "AI"}
+COMMERCIAL_SCORE_BOOST = 5
+
+
 def generate_rankings(scored_domains: list[dict]) -> dict:
     analyzed = [analyze_domain(d) for d in scored_domains]
 
@@ -525,6 +539,8 @@ def generate_rankings(scored_domains: list[dict]) -> dict:
         original_cat = d.get("category", "Brandable")
         target_cat = _map_to_target_category(original_cat, d["domain"])
         d["category"] = target_cat
+        if target_cat in COMMERCIAL_CATEGORIES:
+            d["final_score"] = round(d.get("final_score", 0) + COMMERCIAL_SCORE_BOOST, 2)
         categorized[target_cat].append(d)
 
     for cat in categorized:
@@ -549,8 +565,11 @@ def generate_rankings(scored_domains: list[dict]) -> dict:
     selected.sort(key=lambda x: x.get("final_score", 0), reverse=True)
     selected = selected[:20]
 
-    # Add reason for selection
+    # Recompute probability with final category + add reason
     for d in selected:
+        d["probability_of_sale"] = estimate_probability_of_sale(
+            d.get("final_score", 0), d.get("category", "Brandable")
+        )
         d["reason_for_selection"] = _generate_reason(d)
 
     return {"overall": selected}
