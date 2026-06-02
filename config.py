@@ -50,8 +50,8 @@ class Settings(BaseSettings):
     # Target URL
     target_url: str = (
         "https://member.expireddomains.net/domains/expiredcom/"
-        "?o=statustld_registered&r=d&flast12=1&ftlds[]=2&flimit=200&"
-        "fonlycharhost=1&fadult=1&fworden=1#listing"
+        "?o=statustld_registered&r=d&flimit=200&"
+        "fonlycharhost=1&ftlds[]=2&fadult=1"
     )
 
     # Login URL

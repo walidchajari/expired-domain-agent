@@ -48,16 +48,11 @@ CREATE TABLE IF NOT EXISTS report_domains (
     rank            INTEGER,
     domain          TEXT,
     final_score     REAL,
-    brandability    REAL,
-    resale_potential REAL,
-    pronounceability REAL,
-    memorability    REAL,
-    startup_potential REAL,
-    length          INTEGER,
-    reg             INTEGER,
-    bl              TEXT,
-    dp              TEXT,
-    status          TEXT,
+    category        TEXT,
+    estimated_wholesale_price TEXT,
+    estimated_end_user_price TEXT,
+    probability_of_sale REAL,
+    reason_for_selection TEXT,
     FOREIGN KEY (report_date) REFERENCES daily_reports(report_date)
 )
 """
@@ -111,6 +106,14 @@ def init_db() -> None:
         conn.execute(CREATE_INVESTOR_PROFILE_TABLE)
         conn.execute(CREATE_DOMAIN_CATEGORIES_TABLE)
 
+        # Migration: add new report_domains columns if missing
+        for col in ("category", "estimated_wholesale_price", "estimated_end_user_price",
+                     "probability_of_sale", "reason_for_selection"):
+            try:
+                conn.execute(f"ALTER TABLE report_domains ADD COLUMN {col} TEXT")
+            except Exception:
+                pass
+
 
 def domain_exists(domain: str) -> bool:
     with get_connection() as conn:
@@ -159,11 +162,12 @@ def insert_report_domains(report_date: str, domains: list[dict]) -> None:
         conn.executemany(
             """
             INSERT INTO report_domains
-            (report_date, rank, domain, final_score, brandability, resale_potential,
-             pronounceability, memorability, startup_potential, length, reg, bl, dp, status)
-            VALUES (:report_date, :rank, :domain, :final_score, :brandability,
-                    :resale_potential, :pronounceability, :memorability,
-                    :startup_potential, :length, :reg, :bl, :dp, :status)
+            (report_date, rank, domain, final_score, category,
+             estimated_wholesale_price, estimated_end_user_price,
+             probability_of_sale, reason_for_selection)
+            VALUES (:report_date, :rank, :domain, :final_score, :category,
+                    :estimated_wholesale_price, :estimated_end_user_price,
+                    :probability_of_sale, :reason_for_selection)
             """,
             domains,
         )
