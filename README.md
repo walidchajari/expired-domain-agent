@@ -17,7 +17,9 @@ Scrape ExpiredDomains.net
         |
     AI scores each domain (brandability, resale, pronounceability, memorability)
         |
-    Weighted formula → Top 20 ranking
+    Classified into 5 categories & balanced selection
+        |
+    Weighted formula → diversified Top 20
         |
     Excel report → emailed to you
 ```
@@ -41,6 +43,8 @@ Every domain is evaluated on 5 dimensions by **Gemini 2.5 Flash** (or GPT-4o-min
 - **AI scoring** — domains rated by Gemini 2.5 Flash (free tier) on 5 metrics
 - **Smart filtering** — .com only, 4-12 chars, no numbers/specials, max 2 words, Reg >= 3
 - **Low-quality domain rejection** — blocks generic keywords (my, the, best, online, 24, 365, hub, shop, store, world, group, solutions, services) unless strong commercial signals (reg >= 5 or 1k+ backlinks)
+- **Diversified Top 20** — single ranked list balanced across 5 categories: Brandable (40%), Geo (25%), AI (15%), Fintech (10%), High Commercial Keyword (10%)
+- **Reason for Selection** — each domain includes an explanation of why it was chosen
 - **Excel reports** — formatted with color coding, frozen headers, auto-filters
 - **Email delivery** — report delivered to your inbox daily via Gmail SMTP
 - **Feedback learning** — rate domains (BUY/GOOD/BAD/SKIP) and the AI adapts to your taste
@@ -146,13 +150,20 @@ Copy `.env.example` to `.env` and fill in your credentials:
 
 ## Excel Report
 
-Generated as `Top20Domains_YYYY_MM_DD.xlsx` with:
+Generated as `Top20Domains_YYYY_MM_DD.xlsx` — single sheet with:
 
-- Bold white-on-blue headers
-- Auto-sized columns
-- Color-coded scores: green > 85, yellow 70-85, red < 70
-- Frozen header row
-- Auto-filters enabled
+| Column | Description |
+|--------|-------------|
+| Rank | Position (1-20) |
+| Domain | The domain name |
+| Category | Brandable, Geo, AI, Fintech, or High Commercial Keyword |
+| Final Score | AI-weighted score |
+| Est. Wholesale Value | Estimated reseller/wholesale price |
+| Est. End User Value | Estimated retail/end-user price |
+| Probability of Sale | Likelihood of selling (%) |
+| Reason for Selection | Why this domain was included |
+
+Formatting: bold headers, color-coded scores (green > 85, yellow 70-85, red < 70), frozen header, auto-filters.
 
 ---
 

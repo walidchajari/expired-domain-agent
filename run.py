@@ -141,7 +141,7 @@ def run_pipeline() -> None:
         best_domain = top[0]["domain"]
         excel_filename = ""
 
-        # 7. Generate Excel with 3 sheets
+        # 7. Generate Excel with single diversified Top 20
         report_path = generate_report(rankings)
         excel_filename = report_path.name
 
@@ -152,9 +152,9 @@ def run_pipeline() -> None:
                 "report_date": report_date,
                 "rank": i + 1,
                 **{k: d.get(k, "") for k in (
-                    "domain", "final_score", "brandability", "resale_potential",
-                    "pronounceability", "memorability", "startup_potential",
-                    "length", "reg", "bl", "dp", "status",
+                    "domain", "category", "final_score",
+                    "estimated_wholesale_price", "estimated_end_user_price",
+                    "probability_of_sale", "reason_for_selection",
                 )},
             }
             for i, d in enumerate(top)

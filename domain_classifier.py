@@ -117,6 +117,72 @@ FINTECH_KEYWORDS = {
     "dollar", "euro", "forex", "bond", "equity", "venture", "fintech",
 }
 
+HIGH_VALUE_KEYWORDS = {
+    "insurance", "loan", "mortgage", "credit", "capital", "fund", "trade",
+    "market", "wealth", "estate", "property", "legal", "law", "attorney",
+    "lawyer", "health", "care", "med", "dental", "travel", "hotel", "flight",
+    "booking", "realestate", "solar", "energy", "power", "security", "cloud",
+    "data", "software", "tech", "digital", "mobile", "app", "web", "io",
+    "pay", "cash", "bank", "money", "invest", "finance", "capital",
+    "ventures", "consulting", "solutions", "services", "group",
+}
+
+TARGET_CATEGORIES = ["Brandable", "Geo", "AI", "Fintech", "High Commercial Keyword"]
+
+TARGET_DISTRIBUTION = {
+    "Brandable": 8,
+    "Geo": 5,
+    "AI": 3,
+    "Fintech": 2,
+    "High Commercial Keyword": 2,
+}
+
+
+def _map_to_target_category(original_category: str, domain: str) -> str:
+    mapping = {
+        "Brandable": "Brandable",
+        "Geo Domain": "Geo",
+        "Local Business Domain": "Geo",
+        "AI Domain": "AI",
+        "Fintech Domain": "Fintech",
+    }
+    if original_category in mapping:
+        return mapping[original_category]
+
+    name = domain.replace(".com", "").lower()
+    for kw in HIGH_VALUE_KEYWORDS:
+        if kw in name:
+            return "High Commercial Keyword"
+
+    return "Brandable"
+
+
+def _generate_reason(d: dict) -> str:
+    cat = d.get("category", "Brandable")
+    name = d["domain"].replace(".com", "")
+    score = d.get("final_score", 0)
+
+    reasons = {
+        "Brandable": f"Short brandable name ({len(name)} chars) with strong phonetic structure",
+        "Geo": f"Contains geographic keyword with local commercial potential",
+        "AI": f"AI-industry keyword match in a high-growth sector",
+        "Fintech": f"Financial services keyword with strong resale potential",
+        "High Commercial Keyword": f"High-value commercial keyword with proven end-user demand",
+    }
+
+    base = reasons.get(cat, "Strong overall domain investment opportunity")
+
+    extras = []
+    if score >= 85:
+        extras.append("premium score")
+    if d.get("reg", 0) >= 5:
+        extras.append(f"registered in {d['reg']} TLDs")
+    if extras:
+        base += f" ({', '.join(extras)})"
+
+    return base
+
+
 SAAS_KEYWORDS = {
     "app", "cloud", "hub", "io", "saas", "soft", "software", "platform",
     "suite", "tool", "kit", "api", "sync", "flow", "workflow", "automate",
@@ -454,22 +520,37 @@ def generate_rankings(scored_domains: list[dict]) -> dict:
                 sd.update(ad)
                 break
 
-    overall = sorted(scored_domains, key=lambda x: x.get("final_score", 0), reverse=True)[:20]
+    categorized = {cat: [] for cat in TARGET_CATEGORIES}
+    for d in scored_domains:
+        original_cat = d.get("category", "Brandable")
+        target_cat = _map_to_target_category(original_cat, d["domain"])
+        d["category"] = target_cat
+        categorized[target_cat].append(d)
 
-    brandable = sorted(
-        [d for d in scored_domains if d.get("category") == "Brandable"],
-        key=lambda x: x.get("brandability_score", 0),
-        reverse=True,
-    )[:20]
+    for cat in categorized:
+        categorized[cat].sort(key=lambda x: x.get("final_score", 0), reverse=True)
 
-    geo = sorted(
-        [d for d in scored_domains if d.get("geo_score", 0) > 0],
-        key=lambda x: x.get("geo_score", 0),
-        reverse=True,
-    )[:20]
+    selected = []
+    allocation = dict(TARGET_DISTRIBUTION)
+    surplus = []
 
-    return {
-        "overall": overall,
-        "brandable": brandable,
-        "geo": geo,
-    }
+    for cat, count in allocation.items():
+        pool = categorized[cat]
+        selected.extend(pool[:count])
+        surplus.extend(pool[count:])
+
+    # If any category had fewer than target, fill gaps from surplus best
+    shortfall = 20 - len(selected)
+    if shortfall > 0:
+        surplus.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+        selected.extend(surplus[:shortfall])
+
+    # Sort final by score descending
+    selected.sort(key=lambda x: x.get("final_score", 0), reverse=True)
+    selected = selected[:20]
+
+    # Add reason for selection
+    for d in selected:
+        d["reason_for_selection"] = _generate_reason(d)
+
+    return {"overall": selected}

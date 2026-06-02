@@ -12,8 +12,6 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 HEADER_FILL = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-HEADER_FILL_GEO = PatternFill(start_color="2E75B6", end_color="2E75B6", fill_type="solid")
-HEADER_FILL_BRAND = PatternFill(start_color="385723", end_color="385723", fill_type="solid")
 HEADER_FONT = Font(name="Calibri", bold=True, color="FFFFFF", size=11)
 THIN_BORDER = Border(
     left=Side(style="thin", color="D9D9D9"),
@@ -27,44 +25,27 @@ YELLOW_FILL = PatternFill(start_color="FFEB9C", end_color="FFEB9C", fill_type="s
 RED_FILL = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
 
 SHEET_CONFIG = {
-    "Top 20 Overall": {
+    "Top 20": {
         "columns": [
-            ("Rank", 6), ("Domain", 30), ("Final Score", 12), ("Category", 20),
-            ("Brandability", 14), ("Geo Score", 10), ("Resale Potential", 18),
-            ("Pronounceability", 18), ("Memorability", 14), ("Startup Potential", 18),
-            ("Length", 8), ("Reg", 6), ("Status", 12),
-            ("Est. End User Price", 20), ("Est. Wholesale Price", 20),
-            ("Probability of Sale", 18),
+            ("Rank", 6), ("Domain", 30), ("Category", 22),
+            ("Final Score", 12), ("Est. Wholesale Value", 22),
+            ("Est. End User Value", 22), ("Probability of Sale", 20),
+            ("Reason for Selection", 60),
         ],
         "header_fill": HEADER_FILL,
-        "score_col": "C",
-    },
-    "Top 20 Brandable": {
-        "columns": [
-            ("Rank", 6), ("Domain", 30), ("Brandability Score", 18),
-            ("Final Score", 12), ("Category", 20), ("Length", 8),
-            ("Resale Potential", 18), ("Pronounceability", 18),
-            ("Memorability", 14), ("Startup Potential", 18),
-            ("Est. End User Price", 20), ("Est. Wholesale Price", 20),
-            ("Probability of Sale", 18),
-        ],
-        "header_fill": HEADER_FILL_BRAND,
-        "score_col": "C",
-    },
-    "Top 20 Geo Domains": {
-        "columns": [
-            ("Rank", 6), ("Domain", 30), ("Geo Score", 12),
-            ("Final Score", 12), ("Category", 20), ("Length", 8),
-            ("Brandability", 14), ("Resale Potential", 18),
-            ("Pronounceability", 18), ("Memorability", 14),
-            ("Est. End User Price", 20), ("Est. Wholesale Price", 20),
-            ("Probability of Sale", 18),
-        ],
-        "header_fill": HEADER_FILL_GEO,
-        "score_col": "C",
+        "score_col": "D",
     },
 }
 
+
+COL_KEY_MAP = {
+    "Category": "category",
+    "Final Score": "final_score",
+    "Est. Wholesale Value": "estimated_wholesale_price",
+    "Est. End User Value": "estimated_end_user_price",
+    "Probability of Sale": "probability_of_sale",
+    "Reason for Selection": "reason_for_selection",
+}
 
 def _build_rows(domains: list[dict], columns: list[tuple]) -> list[dict]:
     rows = []
@@ -73,34 +54,13 @@ def _build_rows(domains: list[dict], columns: list[tuple]) -> list[dict]:
         for col_name, _ in columns:
             if col_name == "Rank":
                 continue
-            key = col_name.lower().replace(" ", "_").replace(".", "").replace("(", "").replace(")", "")
-            if col_name == "Brandability Score":
-                key = "brandability_score"
-            elif col_name == "Geo Score":
-                key = "geo_score"
-            elif col_name == "Est. End User Price":
-                key = "estimated_end_user_price"
-            elif col_name == "Est. Wholesale Price":
-                key = "estimated_wholesale_price"
-            elif col_name == "Probability of Sale":
-                key = "probability_of_sale"
+            key = COL_KEY_MAP.get(col_name, col_name.lower().replace(" ", "_"))
+            val = d.get(key, "")
+            if col_name == "Probability of Sale":
+                val = f"{val:.0f}%" if isinstance(val, (int, float)) else val
             elif col_name == "Final Score":
-                key = "final_score"
-            elif col_name == "Brandability":
-                key = "brandability"
-            elif col_name == "Resale Potential":
-                key = "resale_potential"
-            elif col_name == "Pronounceability":
-                key = "pronounceability"
-            elif col_name == "Memorability":
-                key = "memorability"
-            elif col_name == "Startup Potential":
-                key = "startup_potential"
-            elif col_name == "Category":
-                key = "category"
-            elif col_name == "Domain":
-                key = "domain"
-            row[col_name] = d.get(key, "")
+                val = round(val, 2) if isinstance(val, (int, float)) else val
+            row[col_name] = val
         rows.append(row)
     return rows
 
@@ -171,19 +131,17 @@ def _apply_formatting(filepath: Path) -> None:
 
 def generate_report(rankings: dict) -> Path:
     today = datetime.now().strftime("%Y_%m_%d")
-    filename = f"DomainReport_{today}.xlsx"
+    filename = f"Top20Domains_{today}.xlsx"
     filepath = settings.excel_dir / filename
-
-    sheet_map = {"Top 20 Overall": "overall", "Top 20 Brandable": "brandable", "Top 20 Geo Domains": "geo"}
 
     with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
         for sheet_name, config in SHEET_CONFIG.items():
-            domains = rankings.get(sheet_map[sheet_name], [])
+            domains = rankings.get("overall", [])
             df = _collect_sheet_data(sheet_name, config, domains)
             df.to_excel(writer, sheet_name=sheet_name, index=False)
 
     _apply_formatting(filepath)
-    logger.info("Report generated with 3 sheets: %s", filepath)
+    logger.info("Report generated: %s", filepath)
     return filepath
 
 
