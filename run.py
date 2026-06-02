@@ -172,6 +172,7 @@ def run_pipeline() -> None:
             total_analyzed=len(scored),
             top_score=top_score,
             best_domain=best_domain,
+            top_domains=top,
         )
         logger.info("Email sent successfully")
     except Exception:

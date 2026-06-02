@@ -104,42 +104,90 @@ def send_daily_report(
     total_analyzed: int,
     top_score: float,
     best_domain: str,
+    top_domains: Optional[list[dict]] = None,
     to: Optional[str] = None,
     cc: Optional[str] = None,
 ) -> bool:
     today = datetime.now().strftime("%Y-%m-%d")
     name = to.split("@")[0].capitalize() if to else "there"
-    subject = f"Daily Report - {today}"
+    subject = f"Domain Report - {today}"
+
+    # Build top 20 text table for plain text
+    table_txt = ""
+    if top_domains:
+        table_txt = "\nTop 20:\n" + "-" * 60 + "\n"
+        for i, d in enumerate(top_domains[:20], 1):
+            cat = d.get("category", "")
+            score = d.get("final_score", 0)
+            prob = d.get("probability_of_sale", 0)
+            table_txt += f"  {i:2d}. {d['domain']:25s} {cat:20s} {score:5.1f}  ({prob:.0f}%)\n"
 
     body = (
         f"Hi {name},\n\n"
         f"Here is today's domain report.\n\n"
         f"Total analyzed: {total_analyzed}\n"
         f"Top score: {top_score:.1f}\n"
-        f"Best: {best_domain}\n\n"
-        f"The Excel file is attached.\n\n"
+        f"Best: {best_domain}\n"
+        f"{table_txt}\n"
+        f"Excel saved locally in the reports/ folder.\n\n"
         f"Best,\nDomain Agent"
     )
+
+    # Build top 20 HTML table
+    html_rows = ""
+    if top_domains:
+        for i, d in enumerate(top_domains[:20], 1):
+            cat = d.get("category", "")
+            score = d.get("final_score", 0)
+            prob = d.get("probability_of_sale", 0)
+            bg = "#f9f9f9" if i % 2 == 0 else "#fff"
+            html_rows += (
+                f'<tr style="background:{bg};">'
+                f'<td style="padding:6px 4px;text-align:center;color:#888;">{i}</td>'
+                f'<td style="padding:6px 4px;font-weight:600;">{d["domain"]}</td>'
+                f'<td style="padding:6px 4px;color:#666;">{cat}</td>'
+                f'<td style="padding:6px 4px;text-align:center;">{score:.1f}</td>'
+                f'<td style="padding:6px 4px;text-align:center;color:#666;">{prob:.0f}%</td>'
+                f"</tr>\n"
+            )
 
     html_body = f"""<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"></head>
-<body style="font-family:Helvetica,Arial,sans-serif;color:#444;max-width:560px;margin:0 auto;padding:24px;">
+<body style="font-family:Helvetica,Arial,sans-serif;color:#444;max-width:600px;margin:0 auto;padding:24px;">
 <div style="text-align:center;padding:8px 0;">
-  <span style="font-size:20px;font-weight:bold;color:#1a1a1a;">Daily Report</span>
+  <span style="font-size:20px;font-weight:bold;color:#1a1a1a;">Domain Report</span>
+  <span style="font-size:13px;color:#aaa;display:block;">{today}</span>
 </div>
 <div style="border:1px solid #e0e0e0;border-radius:8px;padding:20px;margin:12px 0;">
   <p style="margin:0 0 12px;">Hi {name},</p>
   <p style="margin:0 0 16px;">Your daily domain report is ready.</p>
   <table style="width:100%;border-collapse:collapse;font-size:14px;">
     <tr><td style="padding:8px 4px;color:#888;">Analyzed</td><td style="padding:8px 4px;font-weight:600;">{total_analyzed}</td></tr>
-    <tr><td style="padding:8px 4px;color:#888;border-top:1px solid #eee;">Top Score</td><td style="padding:8px 4px;font-weight:600;border-top:1px solid #eee;">{top_score:.1f}</td></tr>
     <tr><td style="padding:8px 4px;color:#888;border-top:1px solid #eee;">Best</td><td style="padding:8px 4px;font-weight:600;border-top:1px solid #eee;">{best_domain}</td></tr>
   </table>
-  <p style="margin:16px 0 0;">The Excel report is attached.</p>
-</div>
-<div style="text-align:center;font-size:12px;color:#aaa;padding:12px 0;">
-  <p style="margin:0;">Domain Agent &mdash; {today}</p>
+</div>"""
+
+    if html_rows:
+        html_body += f"""<div style="border:1px solid #e0e0e0;border-radius:8px;padding:4px 20px 12px;margin:12px 0;">
+  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+    <thead>
+      <tr style="border-bottom:2px solid #1F4E79;">
+        <th style="padding:8px 4px;text-align:center;color:#1F4E79;">#</th>
+        <th style="padding:8px 4px;text-align:left;color:#1F4E79;">Domain</th>
+        <th style="padding:8px 4px;text-align:left;color:#1F4E79;">Category</th>
+        <th style="padding:8px 4px;text-align:center;color:#1F4E79;">Score</th>
+        <th style="padding:8px 4px;text-align:center;color:#1F4E79;">Sale %</th>
+      </tr>
+    </thead>
+    <tbody>
+{html_rows}
+    </tbody>
+  </table>
+</div>"""
+
+    html_body += """<div style="text-align:center;font-size:12px;color:#aaa;padding:12px 0;">
+  <p style="margin:0;">Domain Agent</p>
 </div>
 </body>
 </html>"""
@@ -148,7 +196,6 @@ def send_daily_report(
         subject=subject,
         body=body,
         html_body=html_body,
-        attachment_path=attachment_path,
         to=to,
         cc=cc,
     )
