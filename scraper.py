@@ -1,6 +1,8 @@
+import json
 import re
 import time
 import logging
+from pathlib import Path
 from typing import Optional
 
 from playwright.sync_api import Playwright, sync_playwright, TimeoutError as PWTimeout
@@ -9,6 +11,8 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+COOKIE_FILE = Path(__file__).parent / "data" / "cookies.json"
 
 
 class ExpiredDomainsScraper:
@@ -20,6 +24,12 @@ class ExpiredDomainsScraper:
     MAX_LENGTH = 12
     MIN_LENGTH = 4
     MAX_WORDS = 2
+
+    LOW_QUALITY_WORDS = {
+        "my", "the", "best", "online", "24", "365",
+        "hub", "shop", "store", "world", "group",
+        "solutions", "services",
+    }
 
     # Column indices in the table (0-based)
     COL_DOMAIN = 0
@@ -39,7 +49,34 @@ class ExpiredDomainsScraper:
         self.timeout = timeout
         self._playwright: Optional[Playwright] = None
         self._browser = None
+        self._context = None
         self._page = None
+
+    # ------------------------------------------------------------------
+    # Cookie persistence
+    # ------------------------------------------------------------------
+    def _cookies_path(self) -> Path:
+        return COOKIE_FILE
+
+    def _save_cookies(self) -> None:
+        cookies = self._context.cookies()
+        path = self._cookies_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(cookies, indent=2))
+        logger.info("Cookies saved (%d cookies)", len(cookies))
+
+    def _load_cookies(self) -> bool:
+        path = self._cookies_path()
+        if not path.exists():
+            return False
+        try:
+            cookies = json.loads(path.read_text())
+            self._context.add_cookies(cookies)
+            logger.info("Cookies loaded (%d cookies)", len(cookies))
+            return True
+        except Exception:
+            logger.warning("Failed to load cookies")
+            return False
 
     # ------------------------------------------------------------------
     # Browser lifecycle
@@ -53,7 +90,7 @@ class ExpiredDomainsScraper:
                 "--disable-blink-features=AutomationControlled",
             ],
         )
-        ctx = self._browser.new_context(
+        self._context = self._browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -62,9 +99,10 @@ class ExpiredDomainsScraper:
             viewport={"width": 1920, "height": 1080},
             locale="en-US",
         )
-        self._page = ctx.new_page()
+        self._page = self._context.new_page()
         self._page.set_default_timeout(self.timeout)
         logger.info("Browser started (headless=%s)", self.headless)
+        self._load_cookies()
 
     def stop(self) -> None:
         try:
@@ -83,6 +121,35 @@ class ExpiredDomainsScraper:
         return self._page
 
     # ------------------------------------------------------------------
+    # Email auth handling
+    # ------------------------------------------------------------------
+    def _handle_email_auth(self) -> None:
+        """Detect email auth page and prompt user for the code."""
+        current_url = self.page.url
+        if "emailauth" not in current_url.lower():
+            return
+
+        logger.info("Email verification required – check your inbox")
+        print("\n" + "=" * 60)
+        print("EMAIL VERIFICATION REQUIRED")
+        print("=" * 60)
+        print(f"ExpiredDomains.net sent a code to {settings.expired_username}")
+        print("Check your email and enter the code below.")
+        code = input("Code: ").strip()
+
+        code_input = self.page.locator("#emailauth_code")
+        code_input.wait_for(timeout=10000)
+        code_input.fill(code)
+        self.page.get_by_role("button", name="Verify").click()
+        self.page.wait_for_load_state("domcontentloaded", timeout=30000)
+
+        if "emailauth" in self.page.url.lower():
+            raise RuntimeError("Email auth failed – check the code and try again")
+
+        logger.info("Email verification passed")
+        self._save_cookies()
+
+    # ------------------------------------------------------------------
     # Login
     # ------------------------------------------------------------------
     @retry(
@@ -94,8 +161,25 @@ class ExpiredDomainsScraper:
         ),
     )
     def login(self) -> None:
+        # Try cookie-based session first
+        if self._cookies_path().exists():
+            logger.info("Cookies found – attempting session restore")
+            self.page.goto(self.TARGET_URL, wait_until="domcontentloaded", timeout=30000)
+            if "login" not in self.page.url.lower() and "emailauth" not in self.page.url.lower():
+                logger.info("Session restored from cookies")
+                return
+            logger.info("Cookies expired – re-authenticating")
+
         logger.info("Navigating to login page…")
         self.page.goto(self.LOGIN_URL, wait_until="domcontentloaded")
+
+        # If already on email auth page (previous attempt left session half-way)
+        if "emailauth" in self.page.url.lower():
+            logger.info("On email auth page – handling before login form")
+            self._handle_email_auth()
+            if "login" not in self.page.url.lower() and "emailauth" not in self.page.url.lower():
+                return
+            self.page.goto(self.LOGIN_URL, wait_until="domcontentloaded")
 
         # Fill username
         username_input = self.page.locator("#inputLogin")
@@ -106,6 +190,12 @@ class ExpiredDomainsScraper:
         password_input = self.page.locator("#inputPassword")
         password_input.wait_for(timeout=5000)
         password_input.fill(settings.expired_password)
+
+        # Check "Remember Me" so the session lasts longer
+        remember = self.page.locator("#rememberMe, #remember_me, input[name='remember']").first
+        if remember.is_visible():
+            remember.check()
+            logger.info("'Remember Me' checked")
 
         # Submit (use role selector to distinguish Login from Search buttons)
         self.page.get_by_role("button", name="Login").click()
@@ -118,7 +208,12 @@ class ExpiredDomainsScraper:
             if "invalid" in body.lower() or "error" in body.lower():
                 raise RuntimeError("Login failed – check credentials in .env")
             raise RuntimeError("Login failed – still on login page")
-        logger.info("Login successful (url=%s)", current_url[:80])
+
+        # Handle email auth if needed
+        self._handle_email_auth()
+
+        logger.info("Login successful (url=%s)", self.page.url[:80])
+        self._save_cookies()
 
     # ------------------------------------------------------------------
     # Navigate to target listing
@@ -261,6 +356,24 @@ class ExpiredDomainsScraper:
             "status": safe_str(raw.get("status", "")),
         }
 
+    @staticmethod
+    def _parse_numeric(value: str) -> int:
+        if not value or value in ("-", "N/A", ""):
+            return 0
+        value = value.strip().lower().replace(",", "").replace("\u00a0", "").replace("\xa0", "")
+        match = re.match(r"([\d.]+)([kmb]?)", value)
+        if not match:
+            return 0
+        num = float(match.group(1))
+        suffix = match.group(2)
+        if suffix == "k":
+            num *= 1000
+        elif suffix == "m":
+            num *= 1_000_000
+        elif suffix == "b":
+            num *= 1_000_000_000
+        return int(num)
+
     def _passes_filters(self, parsed: dict) -> bool:
         domain_name = parsed["domain"].replace(".com", "")
 
@@ -289,6 +402,14 @@ class ExpiredDomainsScraper:
         if len(words) > self.MAX_WORDS:
             return False
 
+        # Reject low-quality keywords unless domain has strong commercial value
+        for kw in self.LOW_QUALITY_WORDS:
+            if kw in domain_name:
+                bl = self._parse_numeric(parsed["bl"])
+                if parsed["reg"] >= 5 or bl >= 1000:
+                    continue
+                return False
+
         return True
 
 
@@ -307,5 +428,22 @@ def scrape_domains(headless: bool = True) -> list[dict]:
     except Exception:
         logger.exception("Scraping failed")
         raise
+    finally:
+        scraper.stop()
+
+
+def login_interactive() -> None:
+    """Run once in non-headless mode to save cookies for future runs."""
+    print("Starting interactive login – a browser window will open.")
+    print("Log in manually and complete any verification if needed.")
+    print("The session will be saved for future automated runs.\n")
+    scraper = ExpiredDomainsScraper(headless=False, timeout=120000)
+    try:
+        scraper.start()
+        scraper.login()
+        print("\nLogin successful! Session saved to cookies.json")
+        input("Press Enter to close the browser…")
+    except Exception:
+        logger.exception("Interactive login failed")
     finally:
         scraper.stop()

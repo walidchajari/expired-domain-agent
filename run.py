@@ -23,7 +23,7 @@ import time
 from config import settings
 from database import init_db, insert_domain, insert_daily_report, insert_report_domains
 from database import get_today_report, insert_feedback
-from scraper import scrape_domains
+from scraper import scrape_domains, login_interactive
 from ai_scoring import score_domains
 from report_generator import generate_report, export_summary_text
 from email_sender import send_daily_report
@@ -32,6 +32,7 @@ from feedback_learner import (
     adjust_score_with_profile,
     get_preference_summary,
 )
+from domain_classifier import analyze_domain, generate_rankings
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -121,11 +122,14 @@ def run_pipeline() -> None:
 
     # 4. Sort and pick top N
     scored.sort(key=lambda x: x.get("final_score", 0), reverse=True)
-    top = scored[: settings.top_n_domains]
+
+    # 5. Apply domain classification & rankings
+    rankings = generate_rankings(scored)
+    top = rankings["overall"]
 
     logger.info("Top domain: %s (score=%.2f)", top[0]["domain"], top[0]["final_score"])
 
-    # 5. Save to database
+    # 6. Save to database
     try:
         analyzed_date = today
         for d in scored:
@@ -137,11 +141,11 @@ def run_pipeline() -> None:
         best_domain = top[0]["domain"]
         excel_filename = ""
 
-        # 6. Generate Excel
-        report_path = generate_report(top)
+        # 7. Generate Excel with 3 sheets
+        report_path = generate_report(rankings)
         excel_filename = report_path.name
 
-        # 7. Save report metadata (daily_report first to satisfy FK)
+        # 8. Save report metadata
         insert_daily_report(report_date, len(scored), top_score, best_domain, excel_filename)
         report_domains_data = [
             {
@@ -161,7 +165,7 @@ def run_pipeline() -> None:
     except Exception:
         logger.exception("Database/Excel step failed – continuing to email")
 
-    # 8. Send email
+    # 9. Send email
     try:
         send_daily_report(
             attachment_path=report_path,
@@ -173,7 +177,7 @@ def run_pipeline() -> None:
     except Exception:
         logger.exception("Email step failed – report saved locally at %s", report_path)
 
-    # 9. Print summary
+    # 10. Print summary
     print(export_summary_text(top))
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
@@ -230,6 +234,11 @@ def main() -> None:
         help="Run continuously and execute daily at configured time",
     )
     parser.add_argument(
+        "--login",
+        action="store_true",
+        help="Interactive login to save session cookies for future runs",
+    )
+    parser.add_argument(
         "--feedback",
         nargs="?",
         const="summary",
@@ -240,7 +249,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    if args.feedback:
+    if args.login:
+        login_interactive()
+    elif args.feedback:
         if args.feedback != "summary":
             # --feedback RATING domain
             handle_feedback(

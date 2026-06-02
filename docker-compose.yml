@@ -1,0 +1,10 @@
+services:
+  domain-agent:
+    build: .
+    container_name: expired-domain-agent
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./reports:/app/reports
+    command: python run.py --schedule
+    restart: unless-stopped

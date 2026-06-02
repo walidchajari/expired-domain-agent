@@ -40,6 +40,7 @@ Every domain is evaluated on 5 dimensions by **Gemini 2.5 Flash** (or GPT-4o-min
 - **Daily automation** — scraper runs at your configured hour via `--schedule` or Windows Task Scheduler
 - **AI scoring** — domains rated by Gemini 2.5 Flash (free tier) on 5 metrics
 - **Smart filtering** — .com only, 4-12 chars, no numbers/specials, max 2 words, Reg >= 3
+- **Low-quality domain rejection** — blocks generic keywords (my, the, best, online, 24, 365, hub, shop, store, world, group, solutions, services) unless strong commercial signals (reg >= 5 or 1k+ backlinks)
 - **Excel reports** — formatted with color coding, frozen headers, auto-filters
 - **Email delivery** — report delivered to your inbox daily via Gmail SMTP
 - **Feedback learning** — rate domains (BUY/GOOD/BAD/SKIP) and the AI adapts to your taste
@@ -82,6 +83,9 @@ notepad .env
 ### Run
 
 ```powershell
+# Interactive login (saves session cookies for headless runs)
+python run.py --login
+
 # One-time manual run
 python run.py
 
@@ -101,19 +105,22 @@ python run.py --feedback SKIP enoughfluff.com
 
 ```
 expired-domain-agent/
-├── run.py                 # Orchestrator & CLI (--schedule, --feedback)
+├── run.py                 # Orchestrator & CLI (--schedule, --feedback, --login)
 ├── config.py              # Environment-based configuration
 ├── scraper.py             # Playwright scraper for ExpiredDomains.net
 ├── ai_scoring.py          # Gemini/OpenAI scoring engine
+├── domain_classifier.py   # Domain classification & ranking
 ├── report_generator.py    # Excel report builder (openpyxl)
 ├── email_sender.py        # SMTP delivery via Gmail
 ├── database.py            # SQLite ORM (domains, feedback, reports)
 ├── feedback_learner.py    # Preference learning system
+├── Dockerfile             # Playwright-based Docker image
+├── docker-compose.yml     # Docker deployment config
 ├── requirements.txt       # Python dependencies
 ├── .env.example           # Configuration template
 ├── .gitignore
 ├── reports/               # Generated Excel files
-└── data/                  # SQLite DB & logs
+└── data/                  # SQLite DB, logs & cookies
 ```
 
 ---
@@ -171,8 +178,23 @@ python run.py --feedback BAD addtochart.com
 |-------------|--------|
 | **Windows** | Task Scheduler (daily trigger) |
 | **Linux** | systemd timer + service |
-| **Docker** | Build image with cron |
+| **Docker** | `docker compose up -d` (runs daily at configured hour) |
 | **AWS** | Lambda + EventBridge |
+
+### Docker
+
+```powershell
+# Build and run once
+docker compose run --rm domain-agent
+
+# Run as daily service in background
+docker compose up -d
+
+# View logs
+docker compose logs -f
+```
+
+The Docker image uses `mcr.microsoft.com/playwright/python` with Chromium baked in — no local browser needed. Session cookies are persisted via a bind mount to `./data/`. Login once locally with `--login` before using Docker for headless runs.
 
 ---
 
