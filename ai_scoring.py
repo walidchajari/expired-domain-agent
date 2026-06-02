@@ -5,6 +5,7 @@ from typing import Optional
 
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from english_filter import compute_english_score
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -158,14 +159,16 @@ def compute_final_score(
     ai_scores: dict,
     length: int,
     reg: int,
+    english_scores: Optional[dict] = None,
 ) -> float:
     """
-    Weighted scoring formula (prioritizing resale value over SEO):
-    25% Brandability
-    25% Resale Potential
+    Weighted scoring formula (prioritizing resale value + English quality):
+    20% Brandability
+    20% Resale Potential
     15% Startup Potential
     10% Pronounceability
     10% Memorability
+    10% English Word Quality    ← NEW
     10% Length score
     5%  Registered TLD count
     """
@@ -174,6 +177,9 @@ def compute_final_score(
     pronounce = ai_scores.get("pronounceability", 50)
     memo = ai_scores.get("memorability", 50)
     startup = ai_scores.get("startup_potential", 50)
+
+    # English word quality score (from english_filter)
+    eng = (english_scores or {}).get("combined_score", 50)
 
     # Length score: ideal 5-7 chars, penalize longer/shorter
     if 5 <= length <= 7:
@@ -189,11 +195,12 @@ def compute_final_score(
     reg_score = min(100, reg * 10)
 
     final = (
-        0.25 * brand
-        + 0.25 * resale
+        0.20 * brand
+        + 0.20 * resale
         + 0.15 * startup
         + 0.10 * pronounce
         + 0.10 * memo
+        + 0.10 * eng
         + 0.10 * length_score
         + 0.05 * reg_score
     )
@@ -215,7 +222,9 @@ def score_domains(domains: list[dict], enabled: bool = True) -> list[dict]:
                 "resale_potential": 50,
                 "ai_raw_response": "",
             })
-            d["final_score"] = compute_final_score(d, d["length"], d["reg"])
+            eng = compute_english_score(d["domain"])
+            d["english_scores"] = eng
+            d["final_score"] = compute_final_score(d, d["length"], d["reg"], eng)
         return domains
 
     scorer = DomainAIScorer()
@@ -224,6 +233,11 @@ def score_domains(domains: list[dict], enabled: bool = True) -> list[dict]:
 
     for i, domain_data in enumerate(domains):
         logger.info("Scoring [%d/%d] %s", i + 1, total, domain_data["domain"])
+
+        # Compute English word scores before AI call
+        eng = compute_english_score(domain_data["domain"])
+        domain_data["english_scores"] = eng
+
         ai = scorer.score_domain(
             domain=domain_data["domain"],
             length=domain_data["length"],
@@ -247,7 +261,7 @@ def score_domains(domains: list[dict], enabled: bool = True) -> list[dict]:
             })
 
         domain_data["final_score"] = compute_final_score(
-            domain_data, domain_data["length"], domain_data["reg"]
+            domain_data, domain_data["length"], domain_data["reg"], eng
         )
         scored.append(domain_data)
 

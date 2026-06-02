@@ -140,12 +140,15 @@ def send_daily_report(
             cat = d.get("category", "")
             score = d.get("final_score", 0)
             prob = d.get("probability_of_sale", 0)
+            eng_scores = d.get("english_scores", {}) or {}
+            eng_val = eng_scores.get("combined_score", 0) if isinstance(eng_scores, dict) else 0
             bg = "#f9f9f9" if i % 2 == 0 else "#fff"
             html_rows += (
                 f'<tr style="background:{bg};">'
                 f'<td style="padding:6px 4px;text-align:center;color:#888;">{i}</td>'
                 f'<td style="padding:6px 4px;font-weight:600;">{d["domain"]}</td>'
                 f'<td style="padding:6px 4px;color:#666;">{cat}</td>'
+                f'<td style="padding:6px 4px;text-align:center;">{eng_val:.0f}</td>'
                 f'<td style="padding:6px 4px;text-align:center;">{score:.1f}</td>'
                 f'<td style="padding:6px 4px;text-align:center;color:#666;">{prob:.0f}%</td>'
                 f"</tr>\n"
@@ -176,6 +179,7 @@ def send_daily_report(
         <th style="padding:8px 4px;text-align:center;color:#1F4E79;">#</th>
         <th style="padding:8px 4px;text-align:left;color:#1F4E79;">Domain</th>
         <th style="padding:8px 4px;text-align:left;color:#1F4E79;">Category</th>
+        <th style="padding:8px 4px;text-align:center;color:#1F4E79;">Eng</th>
         <th style="padding:8px 4px;text-align:center;color:#1F4E79;">Score</th>
         <th style="padding:8px 4px;text-align:center;color:#1F4E79;">Sale %</th>
       </tr>

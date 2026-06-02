@@ -8,6 +8,7 @@ from typing import Optional
 from playwright.sync_api import Playwright, sync_playwright, TimeoutError as PWTimeout
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from english_filter import is_random_garbage
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -17,10 +18,19 @@ COOKIE_FILE = Path(__file__).parent / "data" / "cookies.json"
 
 class ExpiredDomainsScraper:
     LOGIN_URL = "https://www.expireddomains.net/login/"
-    TARGET_URL = settings.target_url
+
+    @property
+    def TARGET_URL(self):
+        if hasattr(self, '_target_url_override'):
+            return self._target_url_override
+        return settings.target_url
+
+    @TARGET_URL.setter
+    def TARGET_URL(self, value):
+        self._target_url_override = value
     # Note: member.expireddomains.net redirects to www.expireddomains.net/login
     FILTERED_STATUSES = {"available", "Available"}
-    REQUIRED_REG = 3
+    REQUIRED_REG = 2
     MAX_LENGTH = 12
     MIN_LENGTH = 4
     MAX_WORDS = 2
@@ -57,6 +67,32 @@ class ExpiredDomainsScraper:
     # ------------------------------------------------------------------
     def _cookies_path(self) -> Path:
         return COOKIE_FILE
+
+    def _sort_tracker_path(self) -> Path:
+        return COOKIE_FILE.parent / "sort_column.txt"
+
+    def _check_sort_column(self) -> None:
+        """Invalidate cookies if the desired sort column changed since last login."""
+        tracker = self._sort_tracker_path()
+        desired_sort = settings.sort_column
+        if not tracker.exists():
+            if self._cookies_path().exists():
+                logger.info(
+                    "No sort tracker found – deleting untracked cookies"
+                    " to force fresh session with sort=%s", desired_sort,
+                )
+                self._cookies_path().unlink()
+            return
+        stored_sort = tracker.read_text().strip()
+        if stored_sort != desired_sort:
+            logger.info(
+                "Sort column changed (%s → %s) – deleting cookies for fresh session",
+                stored_sort, desired_sort,
+            )
+            cookie_path = self._cookies_path()
+            if cookie_path.exists():
+                cookie_path.unlink()
+            tracker.unlink()
 
     def _save_cookies(self) -> None:
         cookies = self._context.cookies()
@@ -161,6 +197,9 @@ class ExpiredDomainsScraper:
         ),
     )
     def login(self) -> None:
+        # If sort column changed, invalidate old cookies so session picks up new sort
+        self._check_sort_column()
+
         # Try cookie-based session first
         if self._cookies_path().exists():
             logger.info("Cookies found – attempting session restore")
@@ -214,6 +253,8 @@ class ExpiredDomainsScraper:
 
         logger.info("Login successful (url=%s)", self.page.url[:80])
         self._save_cookies()
+        self._sort_tracker_path().write_text(settings.sort_column)
+        logger.info("Sort column saved: %s", settings.sort_column)
 
     # ------------------------------------------------------------------
     # Navigate to target listing
@@ -233,21 +274,14 @@ class ExpiredDomainsScraper:
             self.page.wait_for_selector("table.base1", timeout=30000)
         except PWTimeout:
             self.page.wait_for_selector("table", timeout=30000)
-        logger.info("Listing page loaded")
+        logger.info("Listing page loaded (url=%s)", self.page.url[:120])
 
     # ------------------------------------------------------------------
     # Parse table
     # ------------------------------------------------------------------
-    def extract_domains(self) -> list[dict]:
+    def extract_domains(self, pages: int = 1) -> list[dict]:
         domains = []
-        logger.info("Extracting domain rows…")
-
-        rows = self.page.locator("table.base1 tbody tr, table.base1 tr").all()
-        if not rows:
-            rows = self.page.locator("tr").all()
-
-        logger.info("Found %d table rows", len(rows))
-
+        seen = set()
         col_map = {
             "domain": self.COL_DOMAIN,
             "length": self.COL_LENGTH,
@@ -262,26 +296,65 @@ class ExpiredDomainsScraper:
             "status": self.COL_STATUS,
         }
 
-        seen = set()
-        for row in rows:
-            cells = row.locator("td").all()
-            if len(cells) < 20:
-                continue
+        for page_num in range(pages):
+            if page_num > 0:
+                offset = page_num * 200
+                logger.info("Navigating to page %d (start=%d)…", page_num + 1, offset)
+                from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-            raw = self._extract_cells(cells, col_map)
-            if not raw or not self._passes_prefilter(raw):
-                continue
+                parsed = urlparse(self.page.url.split("#")[0])
+                params = parse_qs(parsed.query)
+                params["start"] = [str(offset)]
+                page_url = urlunparse((
+                    parsed.scheme,
+                    parsed.netloc,
+                    parsed.path,
+                    parsed.params,
+                    urlencode(params, doseq=True),
+                    "listing",
+                ))
+                self.page.goto(page_url, wait_until="domcontentloaded")
+                self.page.wait_for_load_state("networkidle", timeout=60000)
+                try:
+                    self.page.wait_for_selector("table.base1", timeout=30000)
+                except PWTimeout:
+                    self.page.wait_for_selector("table", timeout=30000)
+                logger.info("Page %d loaded (url=%s)", page_num + 1, self.page.url[:120])
 
-            domain = raw["domain"]
-            if domain in seen:
-                continue
-            seen.add(domain)
+            logger.info("Extracting domain rows from page %d…", page_num + 1)
+            rows = self.page.locator("table.base1 tbody tr, table.base1 tr").all()
+            if not rows:
+                rows = self.page.locator("tr").all()
+            logger.info("Found %d table rows", len(rows))
 
-            parsed = self._parse_metrics(raw)
-            if parsed and self._passes_filters(parsed):
-                domains.append(parsed)
+            page_domains = 0
+            for row in rows:
+                cells = row.locator("td").all()
+                if len(cells) < 20:
+                    continue
 
-        logger.info("Extracted %d valid domains after filtering", len(domains))
+                raw = self._extract_cells(cells, col_map)
+                if not raw or not self._passes_prefilter(raw):
+                    continue
+
+                domain = raw["domain"]
+                if domain in seen:
+                    continue
+                seen.add(domain)
+
+                parsed = self._parse_metrics(raw)
+                if parsed and self._passes_filters(parsed):
+                    domains.append(parsed)
+                    page_domains += 1
+
+            logger.info("Page %d yielded %d valid domains", page_num + 1, page_domains)
+
+            # Small delay between pages to avoid rate limiting
+            if page_num < pages - 1:
+                import time
+                time.sleep(2)
+
+        logger.info("Extracted %d valid domains total after filtering", len(domains))
         return domains
 
     # ------------------------------------------------------------------
@@ -410,20 +483,24 @@ class ExpiredDomainsScraper:
                     continue
                 return False
 
+        # English filter: reject truly random / unpronounceable garbage
+        if is_random_garbage(domain_name):
+            return False
+
         return True
 
 
 # ------------------------------------------------------------------
 # Convenience entry point
 # ------------------------------------------------------------------
-def scrape_domains(headless: bool = True) -> list[dict]:
+def scrape_domains(headless: bool = True, pages: int = 1) -> list[dict]:
     scraper = ExpiredDomainsScraper(headless=headless)
     try:
         scraper.start()
         scraper.login()
         scraper.navigate_to_listing()
-        domains = scraper.extract_domains()
-        logger.info("Scraping complete – %d domains", len(domains))
+        domains = scraper.extract_domains(pages=pages)
+        logger.info("Scraping complete – %d domains from %d pages", len(domains), pages)
         return domains
     except Exception:
         logger.exception("Scraping failed")

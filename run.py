@@ -85,7 +85,7 @@ def run_pipeline() -> None:
 
     # 1. Scrape
     try:
-        domains = scrape_domains(headless=True)
+        domains = scrape_domains(headless=True, pages=settings.scrape_pages)
     except Exception:
         logger.exception("Scraping step failed – aborting pipeline")
         return

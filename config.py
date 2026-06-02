@@ -33,7 +33,9 @@ class Settings(BaseSettings):
     daily_run_minute: int = 0
 
     # Scraping
-    max_domains_to_analyze: int = 50
+    scrape_pages: int = 3
+    sort_column: str = "bl"
+    max_domains_to_analyze: int = 200
     top_n_domains: int = 20
 
     # AI Scoring
@@ -47,15 +49,9 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     log_file: str = "data/agent.log"
 
-    # Target URL
-    target_url: str = (
-        "https://member.expireddomains.net/domains/expiredcom/"
-        "?o=statustld_registered&r=d&flimit=200&"
-        "fonlycharhost=1&ftlds[]=2&fadult=1"
-    )
-
-    # Login URL
+    # URLs
     login_url: str = "https://www.expireddomains.net/login/"
+    target_base: str = "https://member.expireddomains.net/domains/expiredcom/"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
@@ -76,6 +72,14 @@ class Settings(BaseSettings):
         p = PROJECT_ROOT / self.log_file
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
+
+    @property
+    def target_url(self) -> str:
+        return (
+            f"{self.target_base}"
+            f"?o={self.sort_column}&r=d&flimit=200&"
+            "fonlycharhost=1&ftlds[]=2&fadult=1"
+        )
 
 
 settings = Settings()
