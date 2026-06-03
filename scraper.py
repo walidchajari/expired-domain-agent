@@ -8,7 +8,6 @@ from typing import Optional
 from playwright.sync_api import Playwright, sync_playwright, TimeoutError as PWTimeout
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
-from english_filter import is_random_garbage
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -28,18 +27,9 @@ class ExpiredDomainsScraper:
     @TARGET_URL.setter
     def TARGET_URL(self, value):
         self._target_url_override = value
-    # Note: member.expireddomains.net redirects to www.expireddomains.net/login
     FILTERED_STATUSES = {"available", "Available"}
-    REQUIRED_REG = 2
-    MAX_LENGTH = 12
+    MAX_LENGTH = 15
     MIN_LENGTH = 4
-    MAX_WORDS = 2
-
-    LOW_QUALITY_WORDS = {
-        "my", "the", "best", "online", "24", "365",
-        "hub", "shop", "store", "world", "group",
-        "solutions", "services",
-    }
 
     # Column indices in the table (0-based)
     COL_DOMAIN = 0
@@ -50,7 +40,15 @@ class ExpiredDomainsScraper:
     COL_ABY = 7
     COL_ACR = 8
     COL_MMGR = 9
+    COL_DMOZ = 10
     COL_REG = 11
+    COL_C = 12
+    COL_N = 13
+    COL_O = 14
+    COL_B = 15
+    COL_I = 16
+    COL_D = 17
+    COL_ADDDATE = 18
     COL_RDT = 19
     COL_STATUS = 22
 
@@ -160,7 +158,7 @@ class ExpiredDomainsScraper:
     # Email auth handling
     # ------------------------------------------------------------------
     def _handle_email_auth(self) -> None:
-        """Detect email auth page and prompt user for the code."""
+        """Detect email auth page. In non-headless mode wait for manual completion."""
         current_url = self.page.url
         if "emailauth" not in current_url.lower():
             return
@@ -170,7 +168,7 @@ class ExpiredDomainsScraper:
         print("EMAIL VERIFICATION REQUIRED")
         print("=" * 60)
         print(f"ExpiredDomains.net sent a code to {settings.expired_username}")
-        print("Check your email and enter the code below.")
+        print("Check your email and type the code below.")
         code = input("Code: ").strip()
 
         code_input = self.page.locator("#emailauth_code")
@@ -291,7 +289,15 @@ class ExpiredDomainsScraper:
             "aby": self.COL_ABY,
             "acr": self.COL_ACR,
             "mmgr": self.COL_MMGR,
+            "dmoz": self.COL_DMOZ,
             "reg": self.COL_REG,
+            "reg_c": self.COL_C,
+            "reg_n": self.COL_N,
+            "reg_o": self.COL_O,
+            "reg_b": self.COL_B,
+            "reg_i": self.COL_I,
+            "reg_d": self.COL_D,
+            "adddate": self.COL_ADDDATE,
             "rdt": self.COL_RDT,
             "status": self.COL_STATUS,
         }
@@ -382,7 +388,15 @@ class ExpiredDomainsScraper:
                 "aby": cell_text(col_map["aby"]),
                 "acr": cell_text(col_map["acr"]),
                 "mmgr": cell_text(col_map["mmgr"]),
+                "dmoz": cell_text(col_map["dmoz"]),
                 "reg": cell_text(col_map["reg"]),
+                "reg_c": cell_text(col_map["reg_c"]),
+                "reg_n": cell_text(col_map["reg_n"]),
+                "reg_o": cell_text(col_map["reg_o"]),
+                "reg_b": cell_text(col_map["reg_b"]),
+                "reg_i": cell_text(col_map["reg_i"]),
+                "reg_d": cell_text(col_map["reg_d"]),
+                "adddate": cell_text(col_map["adddate"]),
                 "rdt": cell_text(col_map["rdt"]),
                 "status": cell_text(col_map["status"]),
             }
@@ -424,7 +438,15 @@ class ExpiredDomainsScraper:
             "aby": safe_str(raw.get("aby", "")),
             "acr": safe_str(raw.get("acr", "")),
             "mmgr": safe_str(raw.get("mmgr", "")),
+            "dmoz": safe_str(raw.get("dmoz", "")),
             "reg": safe_int(raw.get("reg", "0")),
+            "reg_c": safe_int(raw.get("reg_c", "0")),
+            "reg_n": safe_int(raw.get("reg_n", "0")),
+            "reg_o": safe_int(raw.get("reg_o", "0")),
+            "reg_b": safe_int(raw.get("reg_b", "0")),
+            "reg_i": safe_int(raw.get("reg_i", "0")),
+            "reg_d": safe_int(raw.get("reg_d", "0")),
+            "adddate": safe_str(raw.get("adddate", "")),
             "rdt": safe_str(raw.get("rdt", "")),
             "status": safe_str(raw.get("status", "")),
         }
@@ -448,45 +470,20 @@ class ExpiredDomainsScraper:
         return int(num)
 
     def _passes_filters(self, parsed: dict) -> bool:
-        domain_name = parsed["domain"].replace(".com", "")
-
-        # Status check (case-insensitive)
+        # Status = Available
         if parsed["status"].lower() not in {s.lower() for s in self.FILTERED_STATUSES}:
             return False
-
-        # Length
-        if parsed["length"] < self.MIN_LENGTH or parsed["length"] > self.MAX_LENGTH:
+        # Length 4-15
+        l = parsed.get("length", 0)
+        if l < self.MIN_LENGTH or l > self.MAX_LENGTH:
             return False
-
-        # Registered in at least N extensions
-        if parsed["reg"] < self.REQUIRED_REG:
-            return False
-
         # No numbers
+        domain_name = parsed["domain"].replace(".com", "")
         if re.search(r"\d", domain_name):
             return False
-
-        # No special characters (only a-z)
+        # Only a-z
         if not re.match(r"^[a-z]+$", domain_name):
             return False
-
-        # Max 2 words (rough heuristic: count possible word boundaries)
-        words = re.findall(r"[a-z]{2,}", domain_name)
-        if len(words) > self.MAX_WORDS:
-            return False
-
-        # Reject low-quality keywords unless domain has strong commercial value
-        for kw in self.LOW_QUALITY_WORDS:
-            if kw in domain_name:
-                bl = self._parse_numeric(parsed["bl"])
-                if parsed["reg"] >= 5 or bl >= 1000:
-                    continue
-                return False
-
-        # English filter: reject truly random / unpronounceable garbage
-        if is_random_garbage(domain_name):
-            return False
-
         return True
 
 
@@ -510,16 +507,52 @@ def scrape_domains(headless: bool = True, pages: int = 1) -> list[dict]:
 
 
 def login_interactive() -> None:
-    """Run once in non-headless mode to save cookies for future runs."""
+    """Run once in non-headless mode to save cookies for future runs.
+
+    The user logs in manually in the browser. The script polls the page URL
+    and saves cookies once the user reaches the domain list page.
+    """
+    import time
+    POLL_INTERVAL = 3
+    MAX_WAIT = 300  # 5 minutes
+    LOGGED_IN_URL = "domain-expireds"
+
     print("Starting interactive login – a browser window will open.")
-    print("Log in manually and complete any verification if needed.")
-    print("The session will be saved for future automated runs.\n")
+    print("A fresh login page is shown. Log in manually and complete any email verification.")
+    print("Cookies are saved automatically once you reach the expired domains list.\n")
     scraper = ExpiredDomainsScraper(headless=False, timeout=120000)
+    start_time = time.time()
     try:
         scraper.start()
-        scraper.login()
-        print("\nLogin successful! Session saved to cookies.json")
-        input("Press Enter to close the browser…")
+        # Go to login page directly
+        scraper.page.goto(scraper.LOGIN_URL, timeout=60000)
+        scraper.page.wait_for_load_state("domcontentloaded")
+        print(f"Waiting up to {MAX_WAIT // 60} min for login...", flush=True)
+        while time.time() - start_time < MAX_WAIT:
+            time.sleep(POLL_INTERVAL)
+            try:
+                url = (scraper.page.url or "").lower()
+            except Exception:
+                url = ""
+            if not url:
+                print("x", end="", flush=True)
+                continue
+            # Still on auth pages
+            if "emailauth" in url:
+                print("e", end="", flush=True)
+                continue
+            if "login" in url:
+                print(".", end="", flush=True)
+                continue
+            # Left the auth pages and reached content
+            if LOGGED_IN_URL in url:
+                print()
+                scraper._save_cookies()
+                elapsed = int(time.time() - start_time)
+                print(f"Login detected! Cookies saved after {elapsed}s.")
+                return
+            print("?", end="", flush=True)
+        raise TimeoutError("Login not completed within the time limit")
     except Exception:
         logger.exception("Interactive login failed")
     finally:

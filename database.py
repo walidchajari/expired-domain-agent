@@ -14,7 +14,15 @@ CREATE TABLE IF NOT EXISTS domains (
     aby             TEXT,
     acr             TEXT,
     mmgr            TEXT,
+    dmoz            TEXT,
     reg             INTEGER,
+    reg_c           INTEGER DEFAULT 0,
+    reg_n           INTEGER DEFAULT 0,
+    reg_o           INTEGER DEFAULT 0,
+    reg_b           INTEGER DEFAULT 0,
+    reg_i           INTEGER DEFAULT 0,
+    reg_d           INTEGER DEFAULT 0,
+    adddate         TEXT,
     rdt             TEXT,
     status          TEXT,
     brandability    REAL DEFAULT 0,
@@ -127,11 +135,13 @@ def insert_domain(data: dict) -> None:
         conn.execute(
             """
             INSERT OR REPLACE INTO domains
-            (domain, length, bl, dp, wby, aby, acr, mmgr, reg, rdt, status,
+            (domain, length, bl, dp, wby, aby, acr, mmgr, dmoz,
+             reg, reg_c, reg_n, reg_o, reg_b, reg_i, reg_d, adddate, rdt, status,
              brandability, resale_potential, pronounceability, memorability,
              startup_potential, final_score, ai_raw_response, analyzed_date)
-            VALUES (:domain, :length, :bl, :dp, :wby, :aby, :acr, :mmgr, :reg,
-                    :rdt, :status, :brandability, :resale_potential,
+            VALUES (:domain, :length, :bl, :dp, :wby, :aby, :acr, :mmgr, :dmoz,
+                    :reg, :reg_c, :reg_n, :reg_o, :reg_b, :reg_i, :reg_d, :adddate, :rdt, :status,
+                    :brandability, :resale_potential,
                     :pronounceability, :memorability, :startup_potential,
                     :final_score, :ai_raw_response, :analyzed_date)
             """,

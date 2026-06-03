@@ -33,9 +33,9 @@ class Settings(BaseSettings):
     daily_run_minute: int = 0
 
     # Scraping
-    scrape_pages: int = 3
+    scrape_pages: int = 5
     sort_column: str = "bl"
-    max_domains_to_analyze: int = 200
+    max_domains_to_analyze: int = 500
     top_n_domains: int = 20
 
     # AI Scoring
@@ -77,8 +77,8 @@ class Settings(BaseSettings):
     def target_url(self) -> str:
         return (
             f"{self.target_base}"
-            f"?o={self.sort_column}&r=d&flimit=200&"
-            "fonlycharhost=1&ftlds[]=2&fadult=1"
+            "?o=statustld_registered&r=d&ftlds[]=2&"
+            "flimit=200&fonlycharhost=1&fadult=1"
         )
 
 

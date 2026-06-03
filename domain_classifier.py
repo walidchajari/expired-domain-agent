@@ -1,5 +1,6 @@
 import re
 import logging
+from datetime import datetime
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -133,8 +134,8 @@ TARGET_DISTRIBUTION = {
     "Brandable": 8,
     "Geo": 5,
     "AI": 3,
-    "Fintech": 2,
-    "High Commercial Keyword": 2,
+    "Fintech": 3,
+    "High Commercial Keyword": 3,
 }
 
 
@@ -158,29 +159,131 @@ def _map_to_target_category(original_category: str, domain: str) -> str:
 
 
 def _generate_reason(d: dict) -> str:
-    cat = d.get("category", "Brandable")
+    """Full investor commentary — why selected, strongest/weakest metrics, value."""
+    raw_cat = d.get("category", "Brandable")
+    cat_map = {
+        "Geo Domain": "Geo", "Local Business Domain": "Geo",
+        "AI Domain": "AI", "Fintech Domain": "Fintech",
+        "SaaS Domain": "Brandable", "E-commerce Domain": "Brandable",
+        "Health Domain": "Brandable", "Travel Domain": "Brandable",
+        "Generic Keyword Domain": "Brandable",
+    }
+    cat = cat_map.get(raw_cat, raw_cat)
     name = d["domain"].replace(".com", "")
     score = d.get("final_score", 0)
+    reg = d.get("reg", 0)
+    dp_raw = d.get("dp", "0")
+    bl_raw = d.get("bl", "0")
+    wby_raw = d.get("wby", "0")
 
+    def _parse(v: str) -> int:
+        if not v or v in ("-", "N/A", ""):
+            return 0
+        v = v.strip().lower().replace(",", "").replace("\u00a0", "").replace("\xa0", "")
+        m = re.match(r"([\d.]+)([kmb]?)", v)
+        if not m:
+            return 0
+        n = float(m.group(1))
+        s = m.group(2)
+        if s == "k": n *= 1000
+        elif s == "m": n *= 1_000_000
+        elif s == "b": n *= 1_000_000_000
+        return int(n)
+
+    dp_val = _parse(dp_raw)
+    bl_val = _parse(bl_raw)
+    wby_val = _parse(wby_raw)
+    age = datetime.now().year - wby_val if 1900 < wby_val <= datetime.now().year else 0
+
+    eng_scores = d.get("english_scores", {})
+    commercial = eng_scores.get("commercial_intent_score", 0) if isinstance(eng_scores, dict) else 0
+    pronounce = eng_scores.get("pronounceability_score", 50) if isinstance(eng_scores, dict) else 50
+    startup = d.get("startup_pattern_score", 0)
+    liquid = d.get("liquid_score", 0)
+    ai_rec = d.get("ai_recommendation", "N/A")
+    ai_conf = d.get("ai_confidence", 0)
+
+    # ---- Why selected ----
     reasons = {
-        "Brandable": f"Short brandable name ({len(name)} chars) with strong phonetic structure",
-        "Geo": f"Contains geographic keyword with local commercial potential",
-        "AI": f"AI-industry keyword match in a high-growth sector",
-        "Fintech": f"Financial services keyword with strong resale potential",
-        "High Commercial Keyword": f"High-value commercial keyword with proven end-user demand",
+        "Brandable": f"Strong brandable name ({len(name)} chars, easy pronunciation)",
+        "Geo": "Geo-commercial combination with local market potential",
+        "AI": "AI-industry keyword in a high-growth sector",
+        "Fintech": "Financial services keyword with strong resale demand",
+        "High Commercial Keyword": "High-value commercial keyword with proven end-user demand",
     }
+    commentary = reasons.get(cat, "Strong overall domain investment opportunity")
 
-    base = reasons.get(cat, "Strong overall domain investment opportunity")
-
-    extras = []
+    # ---- Strongest metrics ----
+    strong = []
+    if reg >= 10:
+        strong.append(f"REG={reg}")
+    elif reg >= 5:
+        strong.append(f"REG={reg}")
+    if dp_val >= 100:
+        strong.append(f"DP={dp_val:,}")
+    if bl_val >= 500:
+        strong.append(f"BL={bl_val:,}")
+    if age >= 10:
+        strong.append(f"{age}y archive")
+    if commercial >= 70:
+        strong.append("high commercial intent")
+    if pronounce >= 85:
+        strong.append("easy pronunciation")
+    if startup >= 80:
+        strong.append("startup pattern")
+    if liquid >= 75:
+        strong.append("highly liquid")
     if score >= 85:
-        extras.append("premium score")
-    if d.get("reg", 0) >= 5:
-        extras.append(f"registered in {d['reg']} TLDs")
-    if extras:
-        base += f" ({', '.join(extras)})"
+        strong.append("premium score")
 
-    return base
+    # ---- Weakest metrics ----
+    weak = []
+    if reg < 3:
+        weak.append("low REG")
+    if dp_val == 0:
+        weak.append("no DP")
+    if age < 2:
+        weak.append("young")
+    if bl_val == 0:
+        weak.append("no BL")
+    if pronounce < 50:
+        weak.append("hard to pronounce")
+    if liquid < 40:
+        weak.append("low liquidity")
+
+    lines = [f"Selected: {commentary}."]
+    if strong:
+        lines.append(f"Strengths: {', '.join(strong)}.")
+    if weak:
+        lines.append(f"Weaknesses: {', '.join(weak)}.")
+    lines.append(f"AI Review: {ai_rec} (confidence: {ai_conf}%)")
+
+    # ---- Resale value ----
+    if score >= 90:
+        retail = "$5,000 - $15,000"
+        wholesale = "$1,500 - $5,000"
+        prob = 85
+    elif score >= 80:
+        retail = "$2,000 - $5,000"
+        wholesale = "$500 - $1,500"
+        prob = 65
+    elif score >= 70:
+        retail = "$1,000 - $3,000"
+        wholesale = "$300 - $1,000"
+        prob = 50
+    elif score >= 60:
+        retail = "$500 - $1,000"
+        wholesale = "$150 - $500"
+        prob = 35
+    else:
+        retail = "$100 - $500"
+        wholesale = "$25 - $150"
+        prob = 15
+
+    lines.append(f"Est. Resale: {wholesale} / {retail}")
+    lines.append(f"Sale Probability: {prob}%")
+
+    return "\n".join(lines)
 
 
 SAAS_KEYWORDS = {
@@ -276,6 +379,274 @@ def _consonant_ratio(name: str) -> float:
     if not name:
         return 0
     return sum(1 for c in name if c in CONSONANTS) / len(name)
+
+
+# ---------------------------------------------------------------------------
+# Startup Pattern Detection
+# ---------------------------------------------------------------------------
+
+def compute_startup_pattern_score(domain: str) -> int:
+    """Detect modern startup naming structures (CVCVCV, CVVCV, CVCCV, etc.)"""
+    name = domain.replace(".com", "").lower()
+    if not name.isalpha():
+        return 0
+    score = 0
+    l = len(name)
+
+    # CVCVCV pattern (Velora, Nexora, Lucexa)
+    if l == 6 and all(
+        (name[i] in CONSONANTS and name[i+1] in VOWELS)
+        for i in range(0, 5, 2)
+    ):
+        score = 100
+    # CVVCV pattern (Zentra, Figma-like)
+    elif l >= 4 and l <= 6:
+        cvcv = True
+        for i in range(0, l - 1, 2):
+            if i + 1 < l:
+                if not (name[i] in CONSONANTS and name[i+1] in VOWELS):
+                    cvcv = False
+                    break
+        if cvcv and l % 2 == 0:
+            score = 90
+    # CVCCV pattern (Stripe, Klarna)
+    elif l >= 5 and l <= 7:
+        if (name[0] in CONSONANTS and name[1] in VOWELS and
+            name[-2] in CONSONANTS and name[-1] in VOWELS):
+            score = 80
+    # CVCV pattern
+    elif l == 4 and name[0] in CONSONANTS and name[1] in VOWELS and name[2] in CONSONANTS and name[3] in VOWELS:
+        score = 85
+    # VCVCV pattern
+    elif l == 5 and name[0] in VOWELS and name[1] in CONSONANTS and name[2] in VOWELS and name[3] in CONSONANTS and name[4] in VOWELS:
+        score = 75
+
+    # Bonus for ending in vowel (strong startup pattern)
+    if score > 0 and name[-1] in VOWELS:
+        score = min(100, score + 10)
+    # Bonus for startup suffixes
+    if score > 0:
+        startup_suffixes = {"ify", "ly", "io", "hub", "lab", "ix", "oz", "um", "us", "is", "os", "ex", "ox"}
+        if any(name.endswith(s) for s in startup_suffixes):
+            score = min(100, score + 15)
+        if any(name.startswith(s) for s in {"vel", "nex", "zent", "lux", "ady", "nov", "rev", "ev", "opt", "apt", "ver"}):
+            score = min(100, score + 10)
+
+    # Fallback score for names with good structure
+    if score == 0 and 4 <= l <= 8:
+        vr = sum(1 for c in name if c in VOWELS) / l
+        if 0.35 <= vr <= 0.55:
+            score = 60
+        elif 0.25 <= vr < 0.35:
+            score = 40
+
+    return max(0, min(100, score))
+
+
+# ---------------------------------------------------------------------------
+# Liquid Domain Score
+# ---------------------------------------------------------------------------
+
+def compute_liquid_score(domain: str) -> int:
+    """Score a domain on liquidity: resale potential based on length, spelling, brandability."""
+    name = domain.replace(".com", "").lower()
+    if not name.isalpha():
+        return 0
+    score = 50
+    l = len(name)
+
+    # Length is critical for liquidity
+    if l == 4:
+        score += 40
+    elif l == 5:
+        score += 35
+    elif l == 6:
+        score += 25
+    elif l == 7:
+        score += 15
+    elif l == 8:
+        score += 5
+    elif l > 8:
+        score -= 10
+
+    # Easy spelling: no confusing consonant clusters
+    unusual_bigrams = {"xq","zq","qj","qx","qz","qy","xz","zx","zw","zv","cq","cg","cj","cv","cz","kk","ww","vv"}
+    has_unusual = False
+    for i in range(l - 1):
+        if name[i:i+2] in unusual_bigrams:
+            has_unusual = True
+            break
+    if has_unusual:
+        score -= 20
+
+    # Ends in vowel = more liquid
+    if name[-1] in VOWELS:
+        score += 10
+
+    # No repeated letters = cleaner
+    if len(set(name)) == l:
+        score += 10
+    elif len(set(name)) < l * 0.6:
+        score -= 5
+
+    # CVCV pattern = very liquid
+    if l >= 4:
+        cvcv = all(
+            (name[i] in CONSONANTS and name[i+1] in VOWELS)
+            for i in range(0, l - 1, 2)
+        )
+        if cvcv:
+            score += 15
+
+    # Broad business usage: common endings
+    if any(name.endswith(s) for s in {"ify", "ly", "io", "hub", "lab", "ix", "um", "us", "ex"}):
+        score += 8
+
+    # Premium short = extra liquid
+    if l <= 5 and score >= 70:
+        score += 10
+
+    return max(0, min(100, score))
+
+
+# ---------------------------------------------------------------------------
+# Premium Keyword Bonus
+# ---------------------------------------------------------------------------
+
+PREMIUM_KEYWORDS = {
+    # Finance
+    "pay": 15, "bank": 15, "credit": 14, "cash": 13, "fund": 13,
+    "capital": 14, "invest": 13, "wealth": 12, "finance": 12, "loan": 12,
+    "trade": 10, "stock": 10, "money": 10, "market": 10, "equity": 10,
+    # Technology
+    "data": 12, "cloud": 12, "tech": 11, "code": 10, "digital": 10,
+    "system": 9, "network": 10, "cyber": 10, "compute": 10, "software": 9,
+    # AI
+    "ai": 15, "agent": 12, "brain": 11, "vision": 10, "mind": 10,
+    "logic": 10, "intel": 12, "neural": 11, "smart": 10, "robot": 9,
+    "learn": 10, "deep": 9, "gpt": 12, "chat": 10, "bot": 9,
+    # Business
+    "trust": 10, "link": 9, "hub": 9, "connect": 9, "pro": 8,
+    "core": 9, "prime": 9, "peak": 8, "max": 8, "pro": 8,
+    # Real Estate
+    "home": 10, "property": 10, "realty": 11, "estate": 10, "roof": 8,
+    "solar": 10, "energy": 9,
+    # Healthcare
+    "health": 10, "care": 9, "med": 10, "clinic": 9, "dental": 9,
+    "wellness": 8, "life": 8,
+    # Travel
+    "travel": 10, "trip": 9, "tour": 8, "fly": 9, "jet": 8,
+    "hotel": 9, "stay": 8, "go": 7,
+    # SaaS
+    "saas": 12, "app": 10, "platform": 9, "flow": 9, "sync": 9,
+    "api": 11, "crm": 10, "erp": 9, "analytics": 9,
+    # E-commerce
+    "shop": 10, "store": 8, "buy": 8, "deal": 7, "cart": 7,
+    "ecom": 10, "mart": 7, "delivery": 8,
+}
+
+
+def compute_premium_keyword_bonus(domain: str) -> int:
+    """Calculate premium keyword bonus (0-100) for high-value commercial keywords."""
+    name = domain.replace(".com", "").lower()
+    score = 0
+    found = set()
+    for kw, pts in PREMIUM_KEYWORDS.items():
+        if kw in name and kw not in found:
+            found.add(kw)
+            score += pts
+    # Multiple keyword bonus
+    if len(found) >= 2:
+        score += 10
+    if len(found) >= 3:
+        score += 10
+    return min(100, score)
+
+
+# ---------------------------------------------------------------------------
+# AI Investor Review
+# ---------------------------------------------------------------------------
+
+def compute_ai_investor_review(domain_data: dict) -> dict:
+    """Simulate a final investor review: BUY/MAYBE/PASS with confidence and reason."""
+    name = domain_data["domain"].replace(".com", "")
+    score = domain_data.get("final_score", 50)
+    cat = domain_data.get("category", "Brandable")
+    brand = domain_data.get("brandability", 50)
+    reg = domain_data.get("reg", 0)
+    dp = domain_data.get("dp", "0")
+    wby = domain_data.get("wby", "0")
+    startup = domain_data.get("startup_pattern_score", 0)
+    liquid = domain_data.get("liquid_score", 0)
+    pronounce = domain_data.get("english_scores", {}).get("pronounceability_score", 50) if isinstance(domain_data.get("english_scores"), dict) else 50
+    commercial = domain_data.get("english_scores", {}).get("commercial_intent_score", 0) if isinstance(domain_data.get("english_scores"), dict) else 0
+    length = domain_data.get("length", len(name))
+
+    reasons = []
+    confidence = 50
+
+    # Positive signals
+    positives = 0
+    if brand >= 80:
+        positives += 1
+        reasons.append("strong brandability")
+    if startup >= 80:
+        positives += 1
+        reasons.append("excellent startup pattern")
+    if liquid >= 75:
+        positives += 1
+        reasons.append("highly liquid")
+    if pronounce >= 85:
+        positives += 1
+        reasons.append("easy pronunciation")
+    if commercial >= 60:
+        positives += 1
+        reasons.append("commercial intent")
+    if reg >= 10:
+        positives += 1
+        reasons.append(f"REG={reg}")
+    if 4 <= length <= 6:
+        positives += 1
+        reasons.append("premium length")
+
+    # Negative signals
+    negatives = 0
+    if brand < 50:
+        negatives += 1
+    if pronounce < 50:
+        negatives += 1
+    if reg < 3:
+        negatives += 1
+    if liquid < 40:
+        negatives += 1
+    if length > 10:
+        negatives += 1
+
+    net = positives - negatives
+
+    if net >= 4 or score >= 80:
+        decision = "BUY"
+        confidence = min(95, 65 + net * 8)
+    elif net >= 2 or score >= 65:
+        decision = "MAYBE"
+        confidence = min(80, 50 + net * 6)
+    else:
+        decision = "PASS"
+        confidence = max(20, 40 - negatives * 8)
+
+    reason_str = ", ".join(reasons[:3]) if reasons else "neutral profile"
+    if decision == "BUY":
+        full_reason = f"Strong buy signal: {reason_str}."
+    elif decision == "MAYBE":
+        full_reason = f"Moderate potential: {reason_str}."
+    else:
+        full_reason = f"Weak signal: {reason_str if reasons else 'insufficient quality'}."
+
+    return {
+        "ai_recommendation": decision,
+        "ai_confidence": confidence,
+        "ai_reason": full_reason,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -444,26 +815,26 @@ def estimate_end_user_price(domain: str, final_score: float, category: str, geo_
     if final_score >= 90:
         return "$5,000 - $15,000"
     elif final_score >= 80:
-        return "$1,000 - $5,000"
+        return "$2,000 - $5,000"
     elif final_score >= 70:
-        return "$500 - $1,000"
+        return "$1,000 - $3,000"
     elif final_score >= 60:
-        return "$250 - $500"
+        return "$500 - $1,000"
     else:
-        return "$50 - $250"
+        return "$100 - $500"
 
 
 def estimate_wholesale_price(domain: str, final_score: float, category: str, geo_score: int, brand_score: int) -> str:
     if final_score >= 90:
-        return "$1,000 - $3,000"
+        return "$1,500 - $5,000"
     elif final_score >= 80:
-        return "$300 - $1,000"
+        return "$500 - $1,500"
     elif final_score >= 70:
-        return "$150 - $300"
+        return "$300 - $1,000"
     elif final_score >= 60:
-        return "$75 - $150"
+        return "$150 - $500"
     else:
-        return "$20 - $75"
+        return "$25 - $150"
 
 
 CATEGORY_SALE_BOOST = {
@@ -480,11 +851,11 @@ def estimate_probability_of_sale(final_score: float, category: str = "Brandable"
     elif final_score >= 80:
         base = 65.0
     elif final_score >= 70:
-        base = 45.0
+        base = 50.0
     elif final_score >= 60:
-        base = 25.0
+        base = 35.0
     else:
-        base = 10.0
+        base = 15.0
     boost = CATEGORY_SALE_BOOST.get(category, 0)
     return min(100.0, base + boost)
 
@@ -501,6 +872,9 @@ def analyze_domain(domain_data: dict) -> dict:
     category = classify_domain(domain)
     geo_score = compute_geo_score(domain)
     brand_score = compute_brandability_score(domain, domain_data.get("brandability", 50))
+    startup_score = compute_startup_pattern_score(domain)
+    liquid_score = compute_liquid_score(domain)
+    premium_kw = compute_premium_keyword_bonus(domain)
 
     end_user = estimate_end_user_price(domain, final_score, category, geo_score, brand_score)
     wholesale = estimate_wholesale_price(domain, final_score, category, geo_score, brand_score)
@@ -511,6 +885,9 @@ def analyze_domain(domain_data: dict) -> dict:
         "category": category,
         "geo_score": geo_score,
         "brandability_score": brand_score,
+        "startup_pattern_score": startup_score,
+        "liquid_score": liquid_score,
+        "premium_keyword_bonus": premium_kw,
         "estimated_end_user_price": end_user,
         "estimated_wholesale_price": wholesale,
         "probability_of_sale": prob_sale,
@@ -533,6 +910,13 @@ def generate_rankings(scored_domains: list[dict]) -> dict:
             if sd["domain"] == ad["domain"]:
                 sd.update(ad)
                 break
+
+    # Compute English scores reference and pronounceability
+    for sd in scored_domains:
+        eng = sd.get("english_scores", {})
+        if isinstance(eng, dict):
+            sd["pronounceability_score"] = eng.get("pronounceability_score", 50)
+            sd["commercial_intent_score"] = eng.get("commercial_intent_score", 0)
 
     categorized = {cat: [] for cat in TARGET_CATEGORIES}
     for d in scored_domains:
@@ -564,6 +948,21 @@ def generate_rankings(scored_domains: list[dict]) -> dict:
     # Sort final by score descending
     selected.sort(key=lambda x: x.get("final_score", 0), reverse=True)
     selected = selected[:20]
+
+    # AI Investor Review — BUY/MAYBE/PASS with confidence
+    for d in selected:
+        review = compute_ai_investor_review(d)
+        d.update(review)
+
+    # Final adjustment: BUY +10, MAYBE +3, PASS -10
+    ADJUSTMENT = {"BUY": 10, "MAYBE": 3, "PASS": -10}
+    for d in selected:
+        adj = ADJUSTMENT.get(d.get("ai_recommendation", "PASS"), 0)
+        d["final_score"] = round(d.get("final_score", 0) + adj, 2)
+        d["score_adjustment"] = adj
+
+    # Re-sort after adjustment
+    selected.sort(key=lambda x: x.get("final_score", 0), reverse=True)
 
     # Recompute probability with final category + add reason
     for d in selected:

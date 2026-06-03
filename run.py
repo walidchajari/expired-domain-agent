@@ -25,7 +25,7 @@ from database import init_db, insert_domain, insert_daily_report, insert_report_
 from database import get_today_report, insert_feedback
 from scraper import scrape_domains, login_interactive
 from ai_scoring import score_domains
-from report_generator import generate_report, export_summary_text
+from report_generator import generate_both_reports, export_summary_text
 from email_sender import send_daily_report
 from feedback_learner import (
     update_investor_profile,
@@ -125,9 +125,9 @@ def run_pipeline() -> None:
 
     # 5. Apply domain classification & rankings
     rankings = generate_rankings(scored)
-    top = rankings["overall"]
+    investor_top = rankings["overall"]
 
-    logger.info("Top domain: %s (score=%.2f)", top[0]["domain"], top[0]["final_score"])
+    logger.info("Top domain: %s (score=%.2f)", investor_top[0]["domain"], investor_top[0]["final_score"])
 
     # 6. Save to database
     try:
@@ -137,16 +137,16 @@ def run_pipeline() -> None:
             insert_domain(d)
 
         report_date = today
-        top_score = top[0]["final_score"]
-        best_domain = top[0]["domain"]
-        excel_filename = ""
+        top_score = investor_top[0]["final_score"]
+        best_domain = investor_top[0]["domain"]
 
-        # 7. Generate Excel with single diversified Top 20
-        report_path = generate_report(rankings)
-        excel_filename = report_path.name
+        # 7. Generate TWO Excel reports
+        report_paths = generate_both_reports(scored, investor_top)
+        available_filename = report_paths[0].name
+        investor_filename = report_paths[1].name
 
         # 8. Save report metadata
-        insert_daily_report(report_date, len(scored), top_score, best_domain, excel_filename)
+        insert_daily_report(report_date, len(scored), top_score, best_domain, investor_filename)
         report_domains_data = [
             {
                 "report_date": report_date,
@@ -157,7 +157,7 @@ def run_pipeline() -> None:
                     "probability_of_sale", "reason_for_selection",
                 )},
             }
-            for i, d in enumerate(top)
+            for i, d in enumerate(investor_top)
         ]
         insert_report_domains(report_date, report_domains_data)
 
@@ -165,21 +165,21 @@ def run_pipeline() -> None:
     except Exception:
         logger.exception("Database/Excel step failed – continuing to email")
 
-    # 9. Send email
+    # 9. Send email with both attachments
     try:
         send_daily_report(
-            attachment_path=report_path,
+            attachment_paths=report_paths,
             total_analyzed=len(scored),
             top_score=top_score,
             best_domain=best_domain,
-            top_domains=top,
+            top_domains=investor_top,
         )
         logger.info("Email sent successfully")
     except Exception:
-        logger.exception("Email step failed – report saved locally at %s", report_path)
+        logger.exception("Email step failed – reports saved locally at %s", report_paths)
 
     # 10. Print summary
-    print(export_summary_text(top))
+    print(export_summary_text(investor_top))
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
     logger.info("=" * 60)
