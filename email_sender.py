@@ -55,7 +55,7 @@ def build_message(
 
 
 def get_recipients(to: str, cc: str) -> list[str]:
-    recipients = [to]
+    recipients = [addr.strip() for addr in to.split(",") if addr.strip()]
     if cc:
         recipients.extend([addr.strip() for addr in cc.split(",") if addr.strip()])
     return recipients

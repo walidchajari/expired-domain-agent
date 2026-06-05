@@ -292,11 +292,181 @@ def generate_investor_report(rankings: list[dict]) -> Path:
     return filepath
 
 
+# ---------------------------------------------------------------------------
+# Report 4: 3-Letter Domains (available, exactly 3 alpha chars)
+# ---------------------------------------------------------------------------
+
+THREELETTER_COLUMNS = [
+    ("Domain", 20), ("LE", 5), ("BL", 10), ("DP", 10),
+    ("WBY", 8), ("ABY", 8), ("ACR", 8), ("MMGR", 12),
+    ("DMOZ", 8), ("REG", 5), ("C", 5), ("N", 5), ("O", 5),
+    ("B", 5), ("I", 5), ("D", 5), ("AddDate", 12), ("RDT", 5),
+    ("Status", 10),
+]
+
+
+def _build_threeletter_rows(domains: list[dict]) -> list[dict]:
+    rows = []
+    for d in domains:
+        row = {"Domain": d["domain"]}
+        for col_name, _ in THREELETTER_COLUMNS:
+            if col_name == "Domain":
+                continue
+            key = AVAILABLE_KEY_MAP.get(col_name, col_name.lower())
+            row[col_name] = d.get(key, "")
+        rows.append(row)
+    return rows
+
+
+def _apply_formatting_threeletter(filepath: Path) -> None:
+    wb = load_workbook(filepath)
+    ws = wb.active
+    for col_idx, (col_name, width) in enumerate(THREELETTER_COLUMNS, start=1):
+        letter = get_column_letter(col_idx)
+        ws.column_dimensions[letter].width = width
+    ws.row_dimensions[1].height = 28
+    for col_idx in range(1, len(THREELETTER_COLUMNS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
+    ws.freeze_panes = "A2"
+    for row_idx in range(2, ws.max_row + 1):
+        for col_idx in range(1, len(THREELETTER_COLUMNS) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.font = Font(name="Calibri", size=11)
+            if row_idx % 2 == 0:
+                cell.fill = ALT_ROW_FILL
+        domain_cell = ws.cell(row=row_idx, column=1)
+        domain_cell.alignment = Alignment(horizontal="left", vertical="center")
+        domain_cell.font = Font(name="Calibri", size=11, bold=True)
+    last_col = get_column_letter(len(THREELETTER_COLUMNS))
+    ws.auto_filter.ref = f"A1:{last_col}{ws.max_row}"
+    wb.save(filepath)
+
+
+def generate_threeletter_report(domains: list[dict]) -> Path:
+    today = datetime.now().strftime("%Y_%m_%d")
+    filename = f"threeletter_domains_{today}.xlsx"
+    filepath = settings.excel_dir / filename
+    rows = _build_threeletter_rows(domains)
+    columns = [c[0] for c in THREELETTER_COLUMNS]
+    df = pd.DataFrame(rows, columns=columns)
+    with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="3-Letter Domains", index=False)
+    _apply_formatting_threeletter(filepath)
+    logger.info("3-letter report generated: %s (%d domains)", filepath, len(domains))
+    return filepath
+
+
 def generate_both_reports(all_domains: list[dict], investor_rankings: list[dict]) -> list[Path]:
     paths = []
     paths.append(generate_available_report(all_domains))
     paths.append(generate_investor_report(investor_rankings))
     return paths
+
+
+# ---------------------------------------------------------------------------
+# Report 3: 3-Word Domains (hyphenated, 3 parts)
+# ---------------------------------------------------------------------------
+
+THREEWORD_COLUMNS = [
+    ("Domain", 32), ("Word Count", 10),
+    ("Word 1", 14), ("Word 2", 14), ("Word 3", 14),
+    ("LE", 5), ("BL", 10), ("DP", 10),
+    ("WBY", 8), ("ABY", 8), ("ACR", 8),
+    ("REG", 5), ("C", 5), ("N", 5), ("O", 5),
+    ("B", 5), ("I", 5), ("D", 5),
+    ("AddDate", 12), ("RDT", 5), ("Status", 10),
+]
+
+
+def _build_threeword_rows(domains: list[dict]) -> list[dict]:
+    rows = []
+    for d in domains:
+        domain_name = d["domain"].replace(".com", "")
+        parts = domain_name.split("-") if "-" in domain_name else [domain_name]
+        row = {
+            "Domain": d["domain"],
+            "Word Count": len(parts),
+            "Word 1": parts[0] if len(parts) > 0 else "",
+            "Word 2": parts[1] if len(parts) > 1 else "",
+            "Word 3": parts[2] if len(parts) > 2 else "",
+            "LE": d.get("length", ""),
+            "BL": d.get("bl", ""),
+            "DP": d.get("dp", ""),
+            "WBY": d.get("wby", ""),
+            "ABY": d.get("aby", ""),
+            "ACR": d.get("acr", ""),
+            "REG": d.get("reg", ""),
+            "C": d.get("reg_c", ""),
+            "N": d.get("reg_n", ""),
+            "O": d.get("reg_o", ""),
+            "B": d.get("reg_b", ""),
+            "I": d.get("reg_i", ""),
+            "D": d.get("reg_d", ""),
+            "AddDate": d.get("adddate", ""),
+            "RDT": d.get("rdt", ""),
+            "Status": d.get("status", ""),
+        }
+        rows.append(row)
+    return rows
+
+
+def _apply_formatting_threeword(filepath: Path) -> None:
+    wb = load_workbook(filepath)
+    ws = wb.active
+
+    for col_idx, (col_name, width) in enumerate(THREEWORD_COLUMNS, start=1):
+        letter = get_column_letter(col_idx)
+        ws.column_dimensions[letter].width = width
+
+    ws.row_dimensions[1].height = 28
+    for col_idx in range(1, len(THREEWORD_COLUMNS) + 1):
+        cell = ws.cell(row=1, column=col_idx)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
+
+    ws.freeze_panes = "A2"
+
+    for row_idx in range(2, ws.max_row + 1):
+        for col_idx in range(1, len(THREEWORD_COLUMNS) + 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.border = THIN_BORDER
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.font = Font(name="Calibri", size=11)
+            if row_idx % 2 == 0:
+                cell.fill = ALT_ROW_FILL
+
+        domain_cell = ws.cell(row=row_idx, column=1)
+        domain_cell.alignment = Alignment(horizontal="left", vertical="center")
+        domain_cell.font = Font(name="Calibri", size=11, bold=True)
+
+    last_col = get_column_letter(len(THREEWORD_COLUMNS))
+    ws.auto_filter.ref = f"A1:{last_col}{ws.max_row}"
+    wb.save(filepath)
+
+
+def generate_threeword_report(domains: list[dict]) -> Path:
+    today = datetime.now().strftime("%Y_%m_%d")
+    filename = f"threeword_domains_{today}.xlsx"
+    filepath = settings.excel_dir / filename
+
+    rows = _build_threeword_rows(domains)
+    columns = [c[0] for c in THREEWORD_COLUMNS]
+    df = pd.DataFrame(rows, columns=columns)
+
+    with pd.ExcelWriter(filepath, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="3-Word Domains", index=False)
+
+    _apply_formatting_threeword(filepath)
+    logger.info("3-word report generated: %s (%d domains)", filepath, len(domains))
+    return filepath
 
 
 def export_summary_text(investor_domains: list[dict]) -> str:

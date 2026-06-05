@@ -277,9 +277,11 @@ class ExpiredDomainsScraper:
     # ------------------------------------------------------------------
     # Parse table
     # ------------------------------------------------------------------
-    def extract_domains(self, pages: int = 1) -> list[dict]:
+    def extract_domains(self, pages: int = 1, filter_func=None) -> list[dict]:
         domains = []
         seen = set()
+        if filter_func is None:
+            filter_func = self._passes_filters
         col_map = {
             "domain": self.COL_DOMAIN,
             "length": self.COL_LENGTH,
@@ -349,7 +351,7 @@ class ExpiredDomainsScraper:
                 seen.add(domain)
 
                 parsed = self._parse_metrics(raw)
-                if parsed and self._passes_filters(parsed):
+                if parsed and filter_func(parsed):
                     domains.append(parsed)
                     page_domains += 1
 
@@ -452,6 +454,35 @@ class ExpiredDomainsScraper:
         }
 
     @staticmethod
+    def _passes_threeletter_filters(parsed: dict) -> bool:
+        """Filter for available exactly 3-letter .com domains (e.g. ait.com)."""
+        if parsed["status"].lower() not in {"available"}:
+            return False
+        domain_name = parsed["domain"].replace(".com", "")
+        if not re.match(r"^[a-z]{3}$", domain_name):
+            return False
+        l = parsed.get("length", 0)
+        if l != 3:
+            return False
+        return True
+
+    @staticmethod
+    def _passes_threeword_filters(parsed: dict) -> bool:
+        """Filter for .com domains with exactly 3 hyphen-separated words."""
+        domain_name = parsed["domain"].replace(".com", "")
+        if not re.match(r"^[a-z-]+$", domain_name):
+            return False
+        parts = domain_name.split("-")
+        if len(parts) != 3:
+            return False
+        if any(len(p) < 2 for p in parts):
+            return False
+        l = parsed.get("length", 0)
+        if l < 8 or l > 30:
+            return False
+        return True
+
+    @staticmethod
     def _parse_numeric(value: str) -> int:
         if not value or value in ("-", "N/A", ""):
             return 0
@@ -506,53 +537,121 @@ def scrape_domains(headless: bool = True, pages: int = 1) -> list[dict]:
         scraper.stop()
 
 
-def login_interactive() -> None:
-    """Run once in non-headless mode to save cookies for future runs.
+THREEWORD_URL = (
+    "https://member.expireddomains.net/domains/expiredcom/"
+    "?o=statustld_registered&r=d&ftlds[]=2&"
+    "flimit=200&fadult=1"
+)
 
-    The user logs in manually in the browser. The script polls the page URL
-    and saves cookies once the user reaches the domain list page.
-    """
-    import time
-    POLL_INTERVAL = 3
-    MAX_WAIT = 300  # 5 minutes
-    LOGGED_IN_URL = "domain-expireds"
 
-    print("Starting interactive login – a browser window will open.")
-    print("A fresh login page is shown. Log in manually and complete any email verification.")
-    print("Cookies are saved automatically once you reach the expired domains list.\n")
-    scraper = ExpiredDomainsScraper(headless=False, timeout=120000)
-    start_time = time.time()
+THREELETTER_URL = (
+    "https://member.expireddomains.net/domains/expiredcom/"
+    "?o=status&r=a&ftlds[]=2&"
+    "flimit=200&fonlycharhost=1&fadult=1"
+)
+
+
+def scrape_threeletter_domains(headless: bool = True, pages: int = 20) -> list[dict]:
+    """Scrape available 3-letter .com domains (e.g. ait.com)."""
+    scraper = ExpiredDomainsScraper(headless=headless)
     try:
         scraper.start()
-        # Go to login page directly
-        scraper.page.goto(scraper.LOGIN_URL, timeout=60000)
-        scraper.page.wait_for_load_state("domcontentloaded")
-        print(f"Waiting up to {MAX_WAIT // 60} min for login...", flush=True)
-        while time.time() - start_time < MAX_WAIT:
-            time.sleep(POLL_INTERVAL)
-            try:
-                url = (scraper.page.url or "").lower()
-            except Exception:
-                url = ""
-            if not url:
-                print("x", end="", flush=True)
-                continue
-            # Still on auth pages
-            if "emailauth" in url:
-                print("e", end="", flush=True)
-                continue
-            if "login" in url:
-                print(".", end="", flush=True)
-                continue
-            # Left the auth pages and reached content
-            if LOGGED_IN_URL in url:
-                print()
+        scraper.login()
+        scraper.TARGET_URL = THREELETTER_URL
+        scraper.navigate_to_listing()
+        domains = scraper.extract_domains(
+            pages=pages,
+            filter_func=ExpiredDomainsScraper._passes_threeletter_filters,
+        )
+        logger.info(
+            "3-letter scraping complete – %d domains from %d pages",
+            len(domains), pages,
+        )
+        return domains
+    except Exception:
+        logger.exception("3-letter scraping failed")
+        raise
+    finally:
+        scraper.stop()
+
+
+def scrape_threeword_domains(headless: bool = True, pages: int = 5) -> list[dict]:
+    """Scrape hyphenated 3-word .com domains (e.g. word1-word2-word3.com)."""
+    scraper = ExpiredDomainsScraper(headless=headless)
+    try:
+        scraper.start()
+        scraper.login()
+        scraper.TARGET_URL = THREEWORD_URL
+        scraper.navigate_to_listing()
+        domains = scraper.extract_domains(
+            pages=pages,
+            filter_func=ExpiredDomainsScraper._passes_threeword_filters,
+        )
+        logger.info(
+            "3-word scraping complete – %d domains from %d pages",
+            len(domains), pages,
+        )
+        return domains
+    except Exception:
+        logger.exception("3-word scraping failed")
+        raise
+    finally:
+        scraper.stop()
+
+
+def login_interactive() -> None:
+    """Run once with automated credentials + manual email code entry.
+
+    Opens a non-headless browser, fills credentials from .env,
+    submits the login form, and if email verification is required,
+    prompts the user to enter the code they received.
+    Cookies are saved for future headless runs.
+    """
+    scraper = ExpiredDomainsScraper(headless=False, timeout=120000)
+    try:
+        scraper.start()
+        # Run the automated login (fills credentials, submits, handles email auth)
+        scraper._check_sort_column()
+
+        logger.info("Navigating to login page…")
+        scraper.page.goto(scraper.LOGIN_URL, wait_until="domcontentloaded")
+
+        # If already on email auth page from a previous half-finished session
+        if "emailauth" in scraper.page.url.lower():
+            logger.info("On email auth page – handling verification")
+            scraper._handle_email_auth()
+            if "login" not in scraper.page.url.lower() and "emailauth" not in scraper.page.url.lower():
                 scraper._save_cookies()
-                elapsed = int(time.time() - start_time)
-                print(f"Login detected! Cookies saved after {elapsed}s.")
+                print("Cookies saved – login complete!")
                 return
-            print("?", end="", flush=True)
-        raise TimeoutError("Login not completed within the time limit")
+
+        # Fill username
+        username_input = scraper.page.locator("#inputLogin")
+        username_input.wait_for(timeout=15000)
+        username_input.fill(settings.expired_username)
+
+        # Fill password
+        password_input = scraper.page.locator("#inputPassword")
+        password_input.wait_for(timeout=5000)
+        password_input.fill(settings.expired_password)
+
+        # Check "Remember Me"
+        remember = scraper.page.locator("#rememberMe, #remember_me, input[name='remember']").first
+        if remember.is_visible():
+            remember.check()
+            logger.info("'Remember Me' checked")
+
+        # Submit
+        scraper.page.get_by_role("button", name="Login").click()
+        scraper.page.wait_for_load_state("domcontentloaded", timeout=30000)
+
+        # Handle email auth interactively
+        scraper._handle_email_auth()
+
+        logger.info("Login successful (url=%s)", scraper.page.url[:80])
+        scraper._save_cookies()
+        scraper._sort_tracker_path().write_text(settings.sort_column)
+        print("Login successful! Cookies saved for future runs.")
     except Exception:
         logger.exception("Interactive login failed")
     finally:

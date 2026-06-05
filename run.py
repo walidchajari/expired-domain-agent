@@ -23,9 +23,9 @@ import time
 from config import settings
 from database import init_db, insert_domain, insert_daily_report, insert_report_domains
 from database import get_today_report, insert_feedback
-from scraper import scrape_domains, login_interactive
+from scraper import scrape_domains, scrape_threeword_domains, scrape_threeletter_domains, login_interactive
 from ai_scoring import score_domains
-from report_generator import generate_both_reports, export_summary_text
+from report_generator import generate_both_reports, generate_threeword_report, generate_threeletter_report, export_summary_text
 from email_sender import send_daily_report
 from feedback_learner import (
     update_investor_profile,
@@ -70,13 +70,13 @@ logger = logging.getLogger("run")
 # ---------------------------------------------------------------------------
 # Core pipeline
 # ---------------------------------------------------------------------------
-def run_pipeline() -> None:
+def run_pipeline(run_date: str | None = None) -> None:
     """Execute the full daily pipeline: scrape → score → report → email."""
     logger.info("=" * 60)
     logger.info("STARTING DAILY PIPELINE")
     logger.info("=" * 60)
 
-    today = datetime.now().strftime("%Y-%m-%d")
+    today = run_date or datetime.now().strftime("%Y-%m-%d")
 
     # Check if already run today
     existing = get_today_report(today)
@@ -178,8 +178,40 @@ def run_pipeline() -> None:
     except Exception:
         logger.exception("Email step failed – reports saved locally at %s", report_paths)
 
-    # 10. Print summary
+    # 10. Scrape 3-word hyphenated domains and generate report
+    threeword_domains = []
+    try:
+        logger.info("--- Starting 3-word domain scrape ---")
+        threeword_domains = scrape_threeword_domains(headless=True, pages=5)
+        if threeword_domains:
+            threeword_path = generate_threeword_report(threeword_domains)
+            report_paths.append(threeword_path)
+            logger.info("3-word report added: %s (%d domains)", threeword_path.name, len(threeword_domains))
+        else:
+            logger.info("No 3-word domains found")
+    except Exception:
+        logger.exception("3-word domain step failed (non-fatal)")
+
+    # 11. Scrape available 3-letter .com domains
+    threeletter_domains = []
+    try:
+        logger.info("--- Starting 3-letter domain scrape ---")
+        threeletter_domains = scrape_threeletter_domains(headless=True, pages=5)
+        if threeletter_domains:
+            threeletter_path = generate_threeletter_report(threeletter_domains)
+            report_paths.append(threeletter_path)
+            logger.info("3-letter report added: %s (%d domains)", threeletter_path.name, len(threeletter_domains))
+        else:
+            logger.info("No 3-letter domains found")
+    except Exception:
+        logger.exception("3-letter domain step failed (non-fatal)")
+
+    # 12. Print summary
     print(export_summary_text(investor_top))
+    if threeword_domains:
+        print(f"\n3-Word Domains found: {len(threeword_domains)}")
+    if threeletter_domains:
+        print(f"\n3-Letter Domains found: {len(threeletter_domains)}")
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETE")
     logger.info("=" * 60)
@@ -247,6 +279,12 @@ def main() -> None:
         help="Record feedback: BUY|GOOD|BAD|SKIP domain.com (or omit for summary)",
     )
     parser.add_argument("domain", nargs="?", help="Domain name for feedback")
+    parser.add_argument(
+        "--date",
+        type=str,
+        default=None,
+        help="Run pipeline for a specific date (YYYY-MM-DD). Defaults to today.",
+    )
 
     args = parser.parse_args()
 
@@ -269,7 +307,7 @@ def main() -> None:
     elif args.schedule:
         run_scheduler()
     else:
-        run_pipeline()
+        run_pipeline(run_date=args.date)
 
 
 if __name__ == "__main__":
